@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pi-python"
+version = "0.1.0"
+description = "Python implementation of the Pi agent harness"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+authors = [{ name = "Pi Contributors" }]
+keywords = ["ai", "llm", "agent", "coding-agent", "cli"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+]
+dependencies = [
+    "pydantic>=2.11",
+    "httpx>=0.28",
+    "rich>=14.0",
+    "prompt-toolkit>=3.0",
+    "click>=8.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.12",
+]
+
+[project.scripts]
+pi = "pi.coding_agent.cli:main"
+
+[project.urls]
+Repository = "https://github.com/earendil-works/pi"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pi"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
