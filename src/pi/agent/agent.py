@@ -198,6 +198,22 @@ class Agent:
     async def _process_event(self, event: AgentEvent) -> None:
         if event.type == "message_start":
             self._state.streaming_message = event.message
+        elif event.type == "text_delta":
+            # 流式文本增量：更新 streaming_message 的内容
+            if self._state.streaming_message is not None:
+                from pi.ai.types import TextContent
+                if self._state.streaming_message.content:
+                    last = self._state.streaming_message.content[-1]
+                    if hasattr(last, "text"):
+                        last.text += event.delta
+                    else:
+                        self._state.streaming_message.content.append(
+                            TextContent(text=event.delta)
+                        )
+                else:
+                    self._state.streaming_message.content.append(
+                        TextContent(text=event.delta)
+                    )
         elif event.type == "message_end":
             self._state.streaming_message = None
             self._state.messages.append(event.message)

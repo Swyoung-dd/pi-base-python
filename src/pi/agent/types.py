@@ -160,6 +160,22 @@ class MessageEndEvent:
 
 
 @dataclass
+class TextDeltaUpdateEvent:
+    """流式文本增量事件，从 provider 透传给 UI 层实时渲染。"""
+    type: Literal["text_delta"] = "text_delta"
+    delta: str = ""
+    content_index: int = 0
+
+
+@dataclass
+class ThinkingDeltaUpdateEvent:
+    """流式思考增量事件。"""
+    type: Literal["thinking_delta"] = "thinking_delta"
+    delta: str = ""
+    content_index: int = 0
+
+
+@dataclass
 class ToolExecutionStartEvent:
     type: Literal["tool_execution_start"] = "tool_execution_start"
     tool_call_id: str = ""
@@ -191,6 +207,8 @@ AgentEvent = (
     MessageStartEvent
     | MessageUpdateEvent
     | MessageEndEvent
+    | TextDeltaUpdateEvent
+    | ThinkingDeltaUpdateEvent
     | ToolExecutionStartEvent
     | ToolExecutionEndEvent
     | TurnEndEvent

@@ -16,7 +16,7 @@ from rich.text import Text
 
 from pi.agent.agent import Agent, AgentOptions
 from pi.agent.types import AgentEvent, AgentTool
-from pi.ai.types import Model, TextContent
+from pi.ai.types import Model
 
 
 class InteractiveSession:
@@ -44,18 +44,28 @@ class InteractiveSession:
         """处理 agent 事件用于显示。"""
         if event.type == "message_start":
             self._current_text = ""
+            self._live = Live(
+                Panel("", title="pi", border_style="blue"),
+                console=self._console,
+                refresh_per_second=15,
+            )
+            self._live.start()
+        elif event.type == "text_delta":
+            self._current_text += event.delta
+            if self._live:
+                self._live.update(
+                    Panel(Markdown(self._current_text), title="pi", border_style="blue")
+                )
         elif event.type == "message_end":
             if self._live:
                 self._live.stop()
                 self._live = None
-            text_parts = []
-            for block in event.message.content:
-                if isinstance(block, TextContent):
-                    text_parts.append(block.text)
-            full_text = "".join(text_parts)
-            if full_text:
-                self._console.print(Panel(Markdown(full_text), title="pi", border_style="blue"))
+            self._current_text = ""
         elif event.type == "tool_execution_start":
+            if self._live:
+                self._live.stop()
+                self._live = None
+            self._current_text = ""
             self._console.print(f"  [dim]-> {event.tool_name}[/dim]")
         elif event.type == "tool_execution_end":
             if event.result and event.result.is_error:

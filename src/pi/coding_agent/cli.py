@@ -57,10 +57,8 @@ def _make_stream_fn(model):
 
 def _print_event(event: AgentEvent) -> None:
     """打印模式下将 agent 事件输出到 stdout。"""
-    if event.type == "message_end":
-        for block in event.message.content:
-            if hasattr(block, "text"):
-                click.echo(block.text)
+    if event.type == "text_delta":
+        click.echo(event.delta, nl=False)
     elif event.type == "tool_execution_start":
         newline = chr(10)
         click.echo(f"{newline}[tool: {event.tool_name}]", err=True)

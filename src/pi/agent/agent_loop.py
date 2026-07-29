@@ -28,6 +28,8 @@ from pi.agent.types import (
     AgentUserMessage,
     MessageEndEvent,
     MessageStartEvent,
+    TextDeltaUpdateEvent,
+    ThinkingDeltaUpdateEvent,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
     TurnEndEvent,
@@ -120,12 +122,34 @@ async def run_agent_loop(
 
         stream: EventStream = await stream_fn(model, llm_context, options)
 
+        # 发射 message_start，使用空 partial
+        partial_msg = AgentAssistantMessage(
+            content=[],
+            api=model.api,
+            provider=model.provider,
+            model=model.id,
+            timestamp=int(time.time() * 1000),
+        )
+        await sink(MessageStartEvent(message=partial_msg))
+
+        # 流式消费：透传 text_delta / thinking_delta 事件给 UI 层
         final_assistant: AssistantMessage | None = None
         async for event in stream:
+            if event.type == "text_delta":
+                await sink(TextDeltaUpdateEvent(
+                    delta=event.delta,
+                    content_index=event.content_index,
+                ))
+            elif event.type == "thinking_delta":
+                await sink(ThinkingDeltaUpdateEvent(
+                    delta=event.delta,
+                    content_index=event.content_index,
+                ))
             if event.type in ("done", "error"):
                 final_assistant = event.message if event.type == "done" else event.error
 
         if final_assistant is None:
+            await sink(MessageEndEvent(message=partial_msg))
             break
 
         agent_msg = AgentAssistantMessage(
