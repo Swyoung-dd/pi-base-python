@@ -6,30 +6,28 @@ AgentTool 将 pi-ai Tool 与异步 execute 函数封装在一起。
 
 from __future__ import annotations
 
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Callable, Coroutine, Literal, Union
+from enum import StrEnum
+from typing import Any, Literal
 
 from pi.ai.types import (
-    AssistantMessage,
     ImageContent,
     Model,
     TextContent,
     ThinkingContent,
     Tool,
     ToolCall,
-    ToolResultMessage,
     Usage,
-    UserMessage,
 )
 
 
-class QueueMode(str, Enum):
+class QueueMode(StrEnum):
     ONE_AT_A_TIME = "one-at-a-time"
     ALL = "all"
 
 
-class ToolExecutionMode(str, Enum):
+class ToolExecutionMode(StrEnum):
     PARALLEL = "parallel"
     SEQUENTIAL = "sequential"
 
@@ -67,7 +65,7 @@ class AgentToolResultMessage:
     timestamp: int = 0
 
 
-AgentMessage = Union[AgentUserMessage, AgentAssistantMessage, AgentToolResultMessage]
+AgentMessage = AgentUserMessage | AgentAssistantMessage | AgentToolResultMessage
 
 
 # ---- Agent 工具 ----
@@ -88,10 +86,14 @@ class AgentTool:
 
     def to_ai_tool(self) -> Tool:
         from pi.ai.types import ToolParameterSchema
+        if isinstance(self.parameters, dict):
+            params = ToolParameterSchema(**self.parameters)
+        else:
+            params = self.parameters
         return Tool(
             name=self.name,
             description=self.description,
-            parameters=ToolParameterSchema(**self.parameters) if isinstance(self.parameters, dict) else self.parameters,
+            parameters=params,
         )
 
 
@@ -185,15 +187,15 @@ class AgentEndEvent:
     messages: list[AgentMessage] = field(default_factory=list)
 
 
-AgentEvent = Union[
-    MessageStartEvent,
-    MessageUpdateEvent,
-    MessageEndEvent,
-    ToolExecutionStartEvent,
-    ToolExecutionEndEvent,
-    TurnEndEvent,
-    AgentEndEvent,
-]
+AgentEvent = (
+    MessageStartEvent
+    | MessageUpdateEvent
+    | MessageEndEvent
+    | ToolExecutionStartEvent
+    | ToolExecutionEndEvent
+    | TurnEndEvent
+    | AgentEndEvent
+)
 
 
 AgentEventSink = Callable[[AgentEvent], Coroutine[Any, Any, None]]

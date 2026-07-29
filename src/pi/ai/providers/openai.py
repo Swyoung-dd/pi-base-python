@@ -29,7 +29,6 @@ from pi.ai.types import (
     StopReason,
     StreamOptions,
     TextContent,
-    ThinkingContent,
     ToolCall,
     ToolResultMessage,
     Usage,
@@ -180,11 +179,9 @@ async def _stream_openai(
     stream_obj: EventStream,
 ) -> None:
     """从 OpenAI 流式请求并推送事件的后台任务。"""
-    import asyncio
 
     now = int(time.time() * 1000)
-    content_blocks: list[Any] = []
-    text_buffers: dict[int, list[str]] = {}
+    text_parts: list[str] = []
     tool_buffers: dict[int, dict[str, str]] = {}
     usage = Usage()
     stop_reason = StopReason.STOP
@@ -199,11 +196,13 @@ async def _stream_openai(
     await stream_obj.push(StartEvent(partial=partial))
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
-            async with client.stream("POST", url, headers=headers, json=payload) as resp:
-                if resp.status_code != 200:
-                    body = await resp.aread()
-                    raise RuntimeError(f"OpenAI API error {resp.status_code}: {body.decode()}")
+        async with (
+            httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client,
+            client.stream("POST", url, headers=headers, json=payload) as resp,
+        ):
+            if resp.status_code != 200:
+                body = await resp.aread()
+                raise RuntimeError(f"OpenAI API error {resp.status_code}: {body.decode()}")
 
                 async for line in resp.aiter_lines():
                     line = line.strip()
@@ -225,15 +224,9 @@ async def _stream_openai(
                     finish = choices[0].get("finish_reason")
 
                     if "content" in delta and delta["content"]:
-                        idx = len(text_buffers)
-                        if idx not in text_buffers:
-                            text_buffers[idx] = []
-                            content_blocks.append(None)  # 占位符
-                        text_buffers[idx].append(delta["content"])
-                        # 更新 partial
-                        partial_text = "".join(text_buffers[idx])
+                        text_parts.append(delta["content"])
                         await stream_obj.push(TextDeltaEvent(
-                            content_index=idx,
+                            content_index=0,
                             delta=delta["content"],
                         ))
 
@@ -262,8 +255,8 @@ async def _stream_openai(
 
         # 构建最终内容块
         final_blocks: list[Any] = []
-        for idx in sorted(text_buffers.keys()):
-            final_blocks.append(TextContent(text="".join(text_buffers[idx])))
+        if text_parts:
+            final_blocks.append(TextContent(text="".join(text_parts)))
         for idx in sorted(tool_buffers.keys()):
             buf = tool_buffers[idx]
             try:

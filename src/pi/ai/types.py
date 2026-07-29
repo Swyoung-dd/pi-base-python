@@ -6,13 +6,13 @@
 
 from __future__ import annotations
 
-from enum import Enum
-from typing import Any, Literal, Union
+from enum import StrEnum
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 
-class StopReason(str, Enum):
+class StopReason(StrEnum):
     PENDING = "pending"
     STOP = "stop"
     LENGTH = "length"
@@ -21,7 +21,7 @@ class StopReason(str, Enum):
     ABORTED = "aborted"
 
 
-class ThinkingLevel(str, Enum):
+class ThinkingLevel(StrEnum):
     MINIMAL = "minimal"
     LOW = "low"
     MEDIUM = "medium"
@@ -30,7 +30,7 @@ class ThinkingLevel(str, Enum):
     MAX = "max"
 
 
-class ModelThinkingLevel(str, Enum):
+class ModelThinkingLevel(StrEnum):
     OFF = "off"
     MINIMAL = "minimal"
     LOW = "low"
@@ -40,7 +40,7 @@ class ModelThinkingLevel(str, Enum):
     MAX = "max"
 
 
-class Transport(str, Enum):
+class Transport(StrEnum):
     SSE = "sse"
     WEBSOCKET = "websocket"
     WEBSOCKET_CACHED = "websocket-cached"
@@ -146,7 +146,7 @@ class ToolResultMessage(BaseModel):
     timestamp: int  # Unix 毫秒
 
 
-Message = Union[UserMessage, AssistantMessage, ToolResultMessage]
+Message = UserMessage | AssistantMessage | ToolResultMessage
 
 
 # ---- 模型 ----

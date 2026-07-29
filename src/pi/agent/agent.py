@@ -8,36 +8,33 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any, Callable, Coroutine
+from typing import Any
 
+from pi.agent.agent_loop import run_agent_loop
+from pi.agent.types import (
+    AgentAssistantMessage,
+    AgentContext,
+    AgentEndEvent,
+    AgentEvent,
+    AgentMessage,
+    AgentState,
+    AgentTool,
+    MessageEndEvent,
+    MessageStartEvent,
+    QueueMode,
+    ToolExecutionMode,
+    TurnEndEvent,
+    create_user_message,
+)
+from pi.ai.streaming import EventStream
 from pi.ai.types import (
     ImageContent,
     Model,
     StreamOptions,
     TextContent,
 )
-from pi.ai.streaming import EventStream
-
-from pi.agent.agent_loop import run_agent_loop
-from pi.agent.types import (
-    AgentAssistantMessage,
-    AgentContext,
-    AgentEvent,
-    AgentMessage,
-    AgentState,
-    AgentTool,
-    AgentToolResult,
-    AgentUserMessage,
-    QueueMode,
-    ToolExecutionMode,
-    create_user_message,
-    MessageStartEvent,
-    MessageEndEvent,
-    TurnEndEvent,
-    AgentEndEvent,
-)
-
 
 StreamFn = Callable[
     [Model, Any, StreamOptions | None],

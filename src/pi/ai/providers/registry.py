@@ -27,8 +27,8 @@ def list_providers() -> list[str]:
 
 def _register_builtins() -> None:
     """首次导入时注册内置提供商。"""
-    from pi.ai.providers.openai import OpenAIProvider
     from pi.ai.providers.anthropic import AnthropicProvider
+    from pi.ai.providers.openai import OpenAIProvider
 
     if "openai" not in _providers:
         register_provider(OpenAIProvider())

@@ -69,10 +69,7 @@ class JsonlStorage(SessionStorage):
         current = self._entries.get(self._leaf_id)
         while current is not None:
             chain.append(current)
-            if current.parent_id:
-                current = self._entries.get(current.parent_id)
-            else:
-                current = None
+            current = self._entries.get(current.parent_id) if current.parent_id else None
         chain.reverse()
         return chain
 

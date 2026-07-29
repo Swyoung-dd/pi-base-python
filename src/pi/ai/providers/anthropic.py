@@ -25,7 +25,6 @@ from pi.ai.streaming import (
 from pi.ai.types import (
     AssistantMessage,
     Context,
-    ImageContent,
     Model,
     StopReason,
     StreamOptions,
@@ -183,11 +182,13 @@ async def _stream_anthropic(
     await stream_obj.push(StartEvent(partial=partial))
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
-            async with client.stream("POST", url, headers=headers, json=payload) as resp:
-                if resp.status_code != 200:
-                    body = await resp.aread()
-                    raise RuntimeError(f"Anthropic API error {resp.status_code}: {body.decode()}")
+        async with (
+            httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client,
+            client.stream("POST", url, headers=headers, json=payload) as resp,
+        ):
+            if resp.status_code != 200:
+                body = await resp.aread()
+                raise RuntimeError(f"Anthropic API error {resp.status_code}: {body.decode()}")
 
                 async for line in resp.aiter_lines():
                     line = line.strip()

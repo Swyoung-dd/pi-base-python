@@ -14,13 +14,10 @@ from pathlib import Path
 
 import click
 
+from pi.agent.agent import Agent, AgentOptions
+from pi.agent.types import AgentEvent, AgentTool
 from pi.ai.models import list_models
 from pi.ai.providers.registry import get_provider
-from pi.ai.streaming import DoneEvent, ErrorEvent, TextDeltaEvent
-from pi.ai.types import StreamOptions, TextContent
-from pi.agent.agent import Agent, AgentOptions
-from pi.agent.tools.base import ToolContext
-from pi.agent.types import AgentEvent, AgentTool
 from pi.coding_agent.config import load_config
 from pi.coding_agent.system_prompt import build_system_prompt
 from pi.coding_agent.tools import (
@@ -72,9 +69,8 @@ def _print_event(event: AgentEvent) -> None:
             for block in event.result.content:
                 if hasattr(block, "text"):
                     click.echo(f"  [error] {block.text}", err=True)
-    elif event.type == "turn_end":
-        if event.message.error_message:
-            click.echo(f"Error: {event.message.error_message}", err=True)
+    elif event.type == "turn_end" and event.message.error_message:
+        click.echo(f"Error: {event.message.error_message}", err=True)
 
 
 async def run_print_mode(prompt: str, config) -> None:
@@ -145,7 +141,9 @@ async def run_interactive_mode(config) -> None:
 @click.command()
 @click.option("-p", "--prompt", "prompt_text", default=None, help="One-shot prompt (print mode)")
 @click.option("-m", "--model", "model_id", default=None, help="Model ID to use")
-@click.option("--list-models", "list_models_flag", is_flag=True, help="List available models and exit")
+@click.option(
+    "--list-models", "list_models_flag", is_flag=True, help="List available models and exit"
+)
 @click.option("--version", is_flag=True, help="Show version and exit")
 def main(prompt_text, model_id, list_models_flag, version):
     """Pi - 终端中的 AI 编码 agent。"""

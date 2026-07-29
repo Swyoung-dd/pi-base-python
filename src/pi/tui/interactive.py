@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from rich.console import Console
@@ -17,7 +16,7 @@ from rich.text import Text
 
 from pi.agent.agent import Agent, AgentOptions
 from pi.agent.types import AgentEvent, AgentTool
-from pi.ai.types import Model, TextContent, ThinkingContent, ToolCall
+from pi.ai.types import Model, TextContent
 
 
 class InteractiveSession:
@@ -63,9 +62,8 @@ class InteractiveSession:
                 for block in event.result.content:
                     if hasattr(block, "text"):
                         self._console.print(f"  [red]error: {block.text}[/red]")
-        elif event.type == "turn_end":
-            if event.message.error_message:
-                self._console.print(f"[red]Error: {event.message.error_message}[/red]")
+        elif event.type == "turn_end" and event.message.error_message:
+            self._console.print(f"[red]Error: {event.message.error_message}[/red]")
 
     async def run(self) -> None:
         """运行交互式 REPL 循环。"""

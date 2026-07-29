@@ -13,42 +13,40 @@ stream boundary.
 
 from __future__ import annotations
 
-import asyncio
 import time
 from typing import Any
-
-from pi.ai.streaming import EventStream
-from pi.ai.types import (
-    AssistantMessage,
-    Context,
-    ImageContent,
-    Message,
-    StopReason,
-    StreamOptions,
-    TextContent,
-    ToolCall,
-    ToolResultMessage as AiToolResultMessage,
-    UserMessage as AiUserMessage,
-)
 
 from pi.agent.types import (
     AgentAssistantMessage,
     AgentContext,
-    AgentEvent,
+    AgentEndEvent,
     AgentEventSink,
     AgentMessage,
-    AgentTool,
     AgentToolCall,
     AgentToolResult,
     AgentToolResultMessage,
     AgentUserMessage,
     MessageEndEvent,
     MessageStartEvent,
-    MessageUpdateEvent,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
     TurnEndEvent,
-    AgentEndEvent,
+)
+from pi.ai.streaming import EventStream
+from pi.ai.types import (
+    AssistantMessage,
+    Context,
+    Message,
+    StopReason,
+    StreamOptions,
+    TextContent,
+    ToolCall,
+)
+from pi.ai.types import (
+    ToolResultMessage as AiToolResultMessage,
+)
+from pi.ai.types import (
+    UserMessage as AiUserMessage,
 )
 
 

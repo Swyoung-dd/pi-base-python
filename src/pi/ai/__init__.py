@@ -1,5 +1,6 @@
 """统一的多 LLM 提供商 API 层。"""
 
+from pi.ai.streaming import AssistantMessageEvent, EventStream
 from pi.ai.types import (
     AssistantMessage,
     Context,
@@ -15,7 +16,6 @@ from pi.ai.types import (
     Usage,
     UserMessage,
 )
-from pi.ai.streaming import AssistantMessageEvent, EventStream
 
 __all__ = [
     "AssistantMessage",

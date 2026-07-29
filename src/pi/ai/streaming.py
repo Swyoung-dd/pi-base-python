@@ -7,8 +7,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Literal, Union
+from typing import Literal
 
 from pi.ai.types import AssistantMessage, ToolCall
 
@@ -65,15 +66,15 @@ class ErrorEvent:
     error: AssistantMessage = field(default_factory=AssistantMessage)
 
 
-AssistantMessageEvent = Union[
-    StartEvent,
-    TextDeltaEvent,
-    ThinkingDeltaEvent,
-    ToolCallDeltaEvent,
-    ToolCallEndEvent,
-    DoneEvent,
-    ErrorEvent,
-]
+AssistantMessageEvent = (
+    StartEvent
+    | TextDeltaEvent
+    | ThinkingDeltaEvent
+    | ToolCallDeltaEvent
+    | ToolCallEndEvent
+    | DoneEvent
+    | ErrorEvent
+)
 
 
 class EventStream:

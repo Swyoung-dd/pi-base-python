@@ -60,7 +60,10 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
                 tool_call_id=call.id,
                 tool_name="edit",
                 content=[TextContent(
-                    text=f"old_text found {count} times in {path_arg}. Provide more context to make it unique."
+                    text=(
+                        f"old_text found {count} times in {path_arg}."
+                        " Provide more context to make it unique."
+                    )
                 )],
                 is_error=True,
             )
@@ -85,7 +88,10 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
 def create_edit_tool() -> AgentTool:
     return AgentTool(
         name="edit",
-        description="Edit a file by replacing old_text with new_text. The old_text must be unique in the file.",
+        description=(
+            "Edit a file by replacing old_text with new_text."
+            " The old_text must be unique in the file."
+        ),
         parameters=PARAMETERS,
         execute=execute,
     )
