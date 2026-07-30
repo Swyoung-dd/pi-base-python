@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import sys
-import uuid
 from pathlib import Path
 
 import click
@@ -21,6 +20,7 @@ from pi.agent.types import AgentEvent, AgentTool
 from pi.ai.models import list_models
 from pi.ai.providers.registry import get_provider
 from pi.coding_agent.config import load_config
+from pi.coding_agent.sessions import list_sessions, resolve_session_id, session_path
 from pi.coding_agent.system_prompt import build_system_prompt
 from pi.coding_agent.tools import (
     create_bash_tool,
@@ -109,7 +109,11 @@ async def run_print_mode(prompt: str, config) -> None:
     await agent.prompt(prompt)
 
 
-async def run_interactive_mode(config) -> None:
+async def run_interactive_mode(
+    config,
+    requested_session_id: str | None = None,
+    continue_latest: bool = False,
+) -> None:
     """运行交互式 REPL 模式。"""
     from pi.tui.interactive import InteractiveSession
 
@@ -130,8 +134,12 @@ async def run_interactive_mode(config) -> None:
         system_prompt = config.system_prompt + chr(10) + chr(10) + system_prompt
 
     stream_fn = _make_stream_fn(model)
-    session_id = uuid.uuid4().hex
-    session_storage = JsonlStorage(config.sessions_dir / f"{session_id}.jsonl")
+    session_id = await resolve_session_id(
+        config.sessions_dir,
+        requested_id=requested_session_id,
+        continue_latest=continue_latest,
+    )
+    session_storage = JsonlStorage(session_path(config.sessions_dir, session_id))
 
     session = InteractiveSession(
         model=model,
@@ -140,18 +148,37 @@ async def run_interactive_mode(config) -> None:
         stream_fn=stream_fn,
         session_id=session_id,
         session_storage=session_storage,
+        sessions_dir=config.sessions_dir,
     )
     await session.run()
+
+
+async def print_sessions(config) -> None:
+    """输出可恢复会话列表。"""
+    for item in await list_sessions(config.sessions_dir):
+        updated = item.updated_at.astimezone().strftime("%Y-%m-%d %H:%M")
+        click.echo(f"{item.session_id:32s}  {item.message_count:4d}  {updated}  {item.preview}")
 
 
 @click.command()
 @click.option("-p", "--prompt", "prompt_text", default=None, help="One-shot prompt (print mode)")
 @click.option("-m", "--model", "model_id", default=None, help="Model ID to use")
+@click.option("--session", "session_id", default=None, help="Resume or create a session ID")
+@click.option("-c", "--continue", "continue_session", is_flag=True, help="Resume latest session")
+@click.option("--list-sessions", is_flag=True, help="List saved sessions and exit")
 @click.option(
     "--list-models", "list_models_flag", is_flag=True, help="List available models and exit"
 )
 @click.option("--version", is_flag=True, help="Show version and exit")
-def main(prompt_text, model_id, list_models_flag, version):
+def main(
+    prompt_text,
+    model_id,
+    session_id,
+    continue_session,
+    list_sessions,
+    list_models_flag,
+    version,
+):
     """Pi - 终端中的 AI 编码 agent。"""
     from pi import __version__
 
@@ -165,13 +192,16 @@ def main(prompt_text, model_id, list_models_flag, version):
         return
 
     config = load_config()
+    if list_sessions:
+        asyncio.run(print_sessions(config))
+        return
     if model_id:
         config.model = model_id
 
     if prompt_text is not None:
         asyncio.run(run_print_mode(prompt_text, config))
     else:
-        asyncio.run(run_interactive_mode(config))
+        asyncio.run(run_interactive_mode(config, session_id, continue_session))
 
 
 if __name__ == "__main__":

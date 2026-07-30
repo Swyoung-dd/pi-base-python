@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console
@@ -16,8 +17,10 @@ from rich.text import Text
 
 from pi.agent.agent import Agent, AgentOptions
 from pi.agent.session.base import SessionStorage
+from pi.agent.session.jsonl import JsonlStorage
 from pi.agent.types import AgentEvent, AgentTool
 from pi.ai.types import Model
+from pi.coding_agent.sessions import list_sessions, new_session_id, session_path
 
 
 class InteractiveSession:
@@ -31,6 +34,7 @@ class InteractiveSession:
         stream_fn: Any,
         session_id: str | None = None,
         session_storage: SessionStorage | None = None,
+        sessions_dir: Path | None = None,
     ) -> None:
         self._console = Console()
         self._agent = Agent(
@@ -46,6 +50,60 @@ class InteractiveSession:
         self._agent.subscribe(self._on_event)
         self._current_text = ""
         self._live: Live | None = None
+        self._sessions_dir = sessions_dir
+
+    async def _handle_command(self, prompt: str) -> tuple[bool, bool]:
+        """处理斜杠命令，返回（是否已处理，是否退出）。"""
+        parts = prompt.strip().split(maxsplit=1)
+        command = parts[0].lower()
+        argument = parts[1].strip() if len(parts) > 1 else ""
+        if command in ("exit", "quit", "/q", "/quit", "/exit"):
+            return True, True
+        if command == "/clear":
+            self._console.clear()
+            return True, False
+        if command == "/help":
+            self._console.print(
+                "/new  /resume <id>  /sessions  /clear  /help  /exit",
+                style="dim",
+            )
+            return True, False
+        if command == "/sessions":
+            if self._sessions_dir is None:
+                self._console.print("Session storage is disabled.", style="yellow")
+                return True, False
+            sessions = await list_sessions(self._sessions_dir)
+            if not sessions:
+                self._console.print("No sessions.", style="dim")
+            for item in sessions:
+                self._console.print(
+                    f"{item.session_id}  {item.message_count:>4}  {item.preview}",
+                    style="dim",
+                )
+            return True, False
+        if command in ("/new", "/resume"):
+            if self._sessions_dir is None:
+                self._console.print("Session storage is disabled.", style="yellow")
+                return True, False
+            session_id = argument if command == "/resume" else new_session_id()
+            if not session_id:
+                self._console.print("Usage: /resume <session-id>", style="yellow")
+                return True, False
+            try:
+                path = session_path(self._sessions_dir, session_id)
+            except ValueError as exc:
+                self._console.print(str(exc), style="red")
+                return True, False
+            if command == "/resume" and not path.exists():
+                self._console.print(f"Session not found: {session_id}", style="red")
+                return True, False
+            await self._agent.switch_session(JsonlStorage(path), session_id)
+            self._console.print(f"Session: {session_id}", style="dim")
+            return True, False
+        if prompt.startswith("/"):
+            self._console.print(f"Unknown command: {command}", style="yellow")
+            return True, False
+        return False, False
 
     async def _on_event(self, event: AgentEvent) -> None:
         """处理 agent 事件用于显示。"""
@@ -99,8 +157,11 @@ class InteractiveSession:
                 prompt = self._console.input("[bold green]>>>[/bold green] ")
                 if not prompt.strip():
                     continue
-                if prompt.strip().lower() in ("exit", "quit", "/q"):
+                handled, should_exit = await self._handle_command(prompt)
+                if should_exit:
                     break
+                if handled:
+                    continue
 
                 await self._agent.prompt(prompt)
                 self._console.print()

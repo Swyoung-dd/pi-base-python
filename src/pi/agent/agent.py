@@ -162,6 +162,20 @@ class Agent:
             ]
         self._session_loaded = True
 
+    async def switch_session(
+        self,
+        storage: SessionStorage,
+        session_id: str | None = None,
+    ) -> None:
+        """切换会话存储，并恢复目标会话的当前分支。"""
+        if self.is_busy:
+            raise RuntimeError("Agent is already processing")
+        self._session_storage = storage
+        self._session_id = session_id
+        self._session_loaded = False
+        self.reset()
+        await self.restore()
+
     def reset(self) -> None:
         self._state.messages.clear()
         self._state.is_streaming = False
