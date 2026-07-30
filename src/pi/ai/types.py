@@ -196,8 +196,8 @@ class StreamOptions(BaseModel):
     max_tokens: int | None = None
     api_key: str | None = None
     session_id: str | None = None
-    timeout_ms: int | None = None
-    max_retries: int | None = None
+    timeout_ms: int | None = Field(default=None, gt=0)
+    max_retries: int | None = Field(default=None, ge=0)
     headers: dict[str, str | None] | None = None
     abort_event: asyncio.Event | None = None
     context_token_limit: int | None = None

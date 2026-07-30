@@ -139,6 +139,11 @@ class InteractiveSession:
                         self._console.print(f"  [red]error: {block.text}[/red]")
         elif event.type == "turn_end" and event.message.error_message:
             self._console.print(f"[red]Error: {event.message.error_message}[/red]")
+        elif event.type == "provider_retry":
+            self._console.print(
+                f"Retry {event.attempt}/{event.max_retries} in {event.delay_ms} ms",
+                style="yellow",
+            )
 
     async def run(self) -> None:
         """运行交互式 REPL 循环。"""

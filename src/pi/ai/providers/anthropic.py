@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from pi.ai.providers.base import BaseProvider
+from pi.ai.providers.retry import raise_for_status, run_with_retries
 from pi.ai.streaming import (
     DoneEvent,
     ErrorEvent,
@@ -148,7 +149,19 @@ class AnthropicProvider(BaseProvider):
         if options and options.temperature is not None:
             payload["temperature"] = options.temperature
 
-        task = asyncio.create_task(_stream_anthropic(url, headers, payload, model, stream_obj))
+        max_retries = options.max_retries if options and options.max_retries is not None else 2
+        timeout = options.timeout_ms / 1000 if options and options.timeout_ms else 600.0
+        task = asyncio.create_task(
+            _stream_anthropic(
+                url,
+                headers,
+                payload,
+                model,
+                stream_obj,
+                max_retries,
+                timeout,
+            )
+        )
         stream_obj.set_producer_task(task)
         return stream_obj
 
@@ -173,6 +186,8 @@ async def _stream_anthropic(
     payload: dict[str, Any],
     model: Model,
     stream_obj: EventStream,
+    max_retries: int,
+    timeout: float,
 ) -> None:
     now = int(time.time() * 1000)
     text_parts: list[str] = []
@@ -190,16 +205,14 @@ async def _stream_anthropic(
     )
     await stream_obj.push(StartEvent(partial=partial))
 
-    try:
+    async def request_once() -> None:
+        nonlocal current_tool, stop_reason
         async with (
-            httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client,
-            client.stream("POST", url, headers=headers, json=payload) as resp,
+            httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client,
+            client.stream("POST", url, headers=headers, json=payload) as response,
         ):
-            if resp.status_code != 200:
-                body = await resp.aread()
-                raise RuntimeError(f"Anthropic API error {resp.status_code}: {body.decode()}")
-
-            async for line in resp.aiter_lines():
+            await raise_for_status(response, "Anthropic")
+            async for line in response.aiter_lines():
                 line = line.strip()
                 if not line or not line.startswith("data: "):
                     continue
@@ -218,42 +231,41 @@ async def _stream_anthropic(
                     delta = data.get("delta", {})
                     if delta.get("type") == "text_delta":
                         text_parts.append(delta["text"])
+                        await stream_obj.push(TextDeltaEvent(content_index=0, delta=delta["text"]))
+                    elif delta.get("type") == "input_json_delta" and current_tool is not None:
+                        current_tool["args"] += delta.get("partial_json", "")
                         await stream_obj.push(
-                            TextDeltaEvent(
-                                content_index=0,
-                                delta=delta["text"],
+                            ToolCallDeltaEvent(
+                                content_index=len(tool_calls),
+                                delta=delta.get("partial_json", ""),
                             )
                         )
-                    elif delta.get("type") == "input_json_delta":
-                        if current_tool is not None:
-                            current_tool["args"] += delta.get("partial_json", "")
-                            await stream_obj.push(
-                                ToolCallDeltaEvent(
-                                    content_index=len(tool_calls),
-                                    delta=delta.get("partial_json", ""),
-                                )
-                            )
-                elif event_type == "content_block_stop":
-                    if current_tool is not None:
-                        tool_calls.append(current_tool)
-                        current_tool = None
+                elif event_type == "content_block_stop" and current_tool is not None:
+                    tool_calls.append(current_tool)
+                    current_tool = None
                 elif event_type == "message_delta":
-                    d = data.get("delta", {})
-                    if d.get("stop_reason"):
-                        sr = d["stop_reason"]
-                        if sr == "tool_use":
-                            stop_reason = StopReason.TOOL_USE
-                        elif sr == "max_tokens":
-                            stop_reason = StopReason.LENGTH
-                    u = data.get("usage", {})
-                    if u.get("output_tokens"):
-                        usage.output = u["output_tokens"]
+                    delta = data.get("delta", {})
+                    if delta.get("stop_reason") == "tool_use":
+                        stop_reason = StopReason.TOOL_USE
+                    elif delta.get("stop_reason") == "max_tokens":
+                        stop_reason = StopReason.LENGTH
+                    response_usage = data.get("usage", {})
+                    if response_usage.get("output_tokens"):
+                        usage.output = response_usage["output_tokens"]
                 elif event_type == "message_start":
-                    u = data.get("message", {}).get("usage", {})
-                    if u.get("input_tokens"):
-                        usage.input = u["input_tokens"]
+                    response_usage = data.get("message", {}).get("usage", {})
+                    if response_usage.get("input_tokens"):
+                        usage.input = response_usage["input_tokens"]
                 elif event_type == "message_stop":
                     usage.total_tokens = usage.input + usage.output
+
+    try:
+        await run_with_retries(
+            request_once,
+            lambda: bool(text_parts or tool_calls or current_tool),
+            stream_obj,
+            max_retries,
+        )
 
         final_blocks: list[Any] = []
         if text_parts:

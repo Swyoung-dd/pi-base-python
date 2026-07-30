@@ -223,6 +223,17 @@ class ContextCompactedEvent:
     dropped_messages: int = 0
 
 
+@dataclass
+class ProviderRetryEvent:
+    """提供商请求将在退避后重试。"""
+
+    type: Literal["provider_retry"] = "provider_retry"
+    attempt: int = 0
+    max_retries: int = 0
+    delay_ms: int = 0
+    error: str = ""
+
+
 AgentEvent = (
     MessageStartEvent
     | MessageUpdateEvent
@@ -234,6 +245,7 @@ AgentEvent = (
     | TurnEndEvent
     | AgentEndEvent
     | ContextCompactedEvent
+    | ProviderRetryEvent
 )
 
 

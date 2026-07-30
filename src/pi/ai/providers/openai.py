@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from pi.ai.providers.base import BaseProvider
+from pi.ai.providers.retry import raise_for_status, run_with_retries
 from pi.ai.streaming import (
     DoneEvent,
     ErrorEvent,
@@ -157,7 +158,19 @@ class OpenAIProvider(BaseProvider):
             if options.max_tokens is not None:
                 payload["max_tokens"] = options.max_tokens
 
-        task = asyncio.create_task(_stream_openai(url, headers, payload, model, stream_obj))
+        max_retries = options.max_retries if options and options.max_retries is not None else 2
+        timeout = options.timeout_ms / 1000 if options and options.timeout_ms else 600.0
+        task = asyncio.create_task(
+            _stream_openai(
+                url,
+                headers,
+                payload,
+                model,
+                stream_obj,
+                max_retries,
+                timeout,
+            )
+        )
         stream_obj.set_producer_task(task)
         return stream_obj
 
@@ -182,6 +195,8 @@ async def _stream_openai(
     payload: dict[str, Any],
     model: Model,
     stream_obj: EventStream,
+    max_retries: int,
+    timeout: float,
 ) -> None:
     """从 OpenAI 流式请求并推送事件的后台任务。"""
 
@@ -200,16 +215,14 @@ async def _stream_openai(
     )
     await stream_obj.push(StartEvent(partial=partial))
 
-    try:
+    async def request_once() -> None:
+        nonlocal stop_reason
         async with (
-            httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client,
-            client.stream("POST", url, headers=headers, json=payload) as resp,
+            httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client,
+            client.stream("POST", url, headers=headers, json=payload) as response,
         ):
-            if resp.status_code != 200:
-                body = await resp.aread()
-                raise RuntimeError(f"OpenAI API error {resp.status_code}: {body.decode()}")
-
-            async for line in resp.aiter_lines():
+            await raise_for_status(response, "OpenAI")
+            async for line in response.aiter_lines():
                 line = line.strip()
                 if not line or not line.startswith("data: "):
                     continue
@@ -219,48 +232,49 @@ async def _stream_openai(
                 chunk = json.loads(data)
                 choices = chunk.get("choices", [])
                 if chunk.get("usage"):
-                    u = chunk["usage"]
-                    usage.input = u.get("prompt_tokens", 0)
-                    usage.output = u.get("completion_tokens", 0)
-                    usage.total_tokens = u.get("total_tokens", 0)
+                    response_usage = chunk["usage"]
+                    usage.input = response_usage.get("prompt_tokens", 0)
+                    usage.output = response_usage.get("completion_tokens", 0)
+                    usage.total_tokens = response_usage.get("total_tokens", 0)
                 if not choices:
                     continue
                 delta = choices[0].get("delta", {})
                 finish = choices[0].get("finish_reason")
 
-                if "content" in delta and delta["content"]:
+                if delta.get("content"):
                     text_parts.append(delta["content"])
-                    await stream_obj.push(
-                        TextDeltaEvent(
-                            content_index=0,
-                            delta=delta["content"],
-                        )
-                    )
+                    await stream_obj.push(TextDeltaEvent(content_index=0, delta=delta["content"]))
 
-                if "tool_calls" in delta:
-                    for tc in delta["tool_calls"]:
-                        idx = tc.get("index", 0)
-                        if idx not in tool_buffers:
-                            tool_buffers[idx] = {"id": "", "name": "", "args": ""}
-                        if tc.get("id"):
-                            tool_buffers[idx]["id"] = tc["id"]
-                        fn = tc.get("function", {})
-                        if fn.get("name"):
-                            tool_buffers[idx]["name"] = fn["name"]
-                        if fn.get("arguments"):
-                            tool_buffers[idx]["args"] += fn["arguments"]
-                            await stream_obj.push(
-                                ToolCallDeltaEvent(
-                                    content_index=idx,
-                                    delta=fn["arguments"],
-                                )
+                for tool_delta in delta.get("tool_calls", []):
+                    index = tool_delta.get("index", 0)
+                    if index not in tool_buffers:
+                        tool_buffers[index] = {"id": "", "name": "", "args": ""}
+                    if tool_delta.get("id"):
+                        tool_buffers[index]["id"] = tool_delta["id"]
+                    function = tool_delta.get("function", {})
+                    if function.get("name"):
+                        tool_buffers[index]["name"] = function["name"]
+                    if function.get("arguments"):
+                        tool_buffers[index]["args"] += function["arguments"]
+                        await stream_obj.push(
+                            ToolCallDeltaEvent(
+                                content_index=index,
+                                delta=function["arguments"],
                             )
+                        )
 
-                if finish:
-                    if finish == "tool_calls":
-                        stop_reason = StopReason.TOOL_USE
-                    elif finish == "length":
-                        stop_reason = StopReason.LENGTH
+                if finish == "tool_calls":
+                    stop_reason = StopReason.TOOL_USE
+                elif finish == "length":
+                    stop_reason = StopReason.LENGTH
+
+    try:
+        await run_with_retries(
+            request_once,
+            lambda: bool(text_parts or tool_buffers),
+            stream_obj,
+            max_retries,
+        )
 
         # 构建最终内容块
         final_blocks: list[Any] = []

@@ -18,7 +18,7 @@ from pi.ai.types import AssistantMessage, ToolCall
 @dataclass
 class StartEvent:
     type: Literal["start"] = "start"
-    partial: AssistantMessage = field(default_factory=AssistantMessage)
+    partial: AssistantMessage | None = None
 
 
 @dataclass
@@ -26,7 +26,7 @@ class TextDeltaEvent:
     type: Literal["text_delta"] = "text_delta"
     content_index: int = 0
     delta: str = ""
-    partial: AssistantMessage = field(default_factory=AssistantMessage)
+    partial: AssistantMessage | None = None
 
 
 @dataclass
@@ -34,7 +34,7 @@ class ThinkingDeltaEvent:
     type: Literal["thinking_delta"] = "thinking_delta"
     content_index: int = 0
     delta: str = ""
-    partial: AssistantMessage = field(default_factory=AssistantMessage)
+    partial: AssistantMessage | None = None
 
 
 @dataclass
@@ -42,7 +42,7 @@ class ToolCallDeltaEvent:
     type: Literal["toolcall_delta"] = "toolcall_delta"
     content_index: int = 0
     delta: str = ""
-    partial: AssistantMessage = field(default_factory=AssistantMessage)
+    partial: AssistantMessage | None = None
 
 
 @dataclass
@@ -50,7 +50,7 @@ class ToolCallEndEvent:
     type: Literal["toolcall_end"] = "toolcall_end"
     content_index: int = 0
     tool_call: ToolCall = field(default_factory=ToolCall)
-    partial: AssistantMessage = field(default_factory=AssistantMessage)
+    partial: AssistantMessage | None = None
 
 
 @dataclass
@@ -67,6 +67,15 @@ class ErrorEvent:
     error: AssistantMessage = field(default_factory=AssistantMessage)
 
 
+@dataclass
+class RetryEvent:
+    type: Literal["retry"] = "retry"
+    attempt: int = 0
+    max_retries: int = 0
+    delay_ms: int = 0
+    error: str = ""
+
+
 AssistantMessageEvent = (
     StartEvent
     | TextDeltaEvent
@@ -75,6 +84,7 @@ AssistantMessageEvent = (
     | ToolCallEndEvent
     | DoneEvent
     | ErrorEvent
+    | RetryEvent
 )
 
 

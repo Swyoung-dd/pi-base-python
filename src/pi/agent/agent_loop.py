@@ -31,6 +31,7 @@ from pi.agent.types import (
     ContextCompactedEvent,
     MessageEndEvent,
     MessageStartEvent,
+    ProviderRetryEvent,
     TextDeltaUpdateEvent,
     ThinkingDeltaUpdateEvent,
     ToolExecutionEndEvent,
@@ -218,6 +219,15 @@ async def run_agent_loop(
                     ThinkingDeltaUpdateEvent(
                         delta=event.delta,
                         content_index=event.content_index,
+                    )
+                )
+            elif event.type == "retry":
+                await sink(
+                    ProviderRetryEvent(
+                        attempt=event.attempt,
+                        max_retries=event.max_retries,
+                        delay_ms=event.delay_ms,
+                        error=event.error,
                     )
                 )
             if event.type in ("done", "error"):
