@@ -1,12 +1,21 @@
 """交互终端状态与命令测试。"""
 
+from unittest.mock import Mock
+
 import pytest
+from rich.panel import Panel
 
 from pi.agent.session import JsonlStorage
-from pi.agent.types import AgentAssistantMessage, create_user_message
+from pi.agent.types import (
+    AgentAssistantMessage,
+    MessageEndEvent,
+    MessageStartEvent,
+    TurnEndEvent,
+    create_user_message,
+)
 from pi.ai.models import list_models
 from pi.ai.oauth import CredentialStore, resolve_stored_api_key, save_api_key
-from pi.ai.types import TextContent, Usage
+from pi.ai.types import TextContent, ToolCall, Usage
 from pi.coding_agent.extensions import ExtensionContext
 from pi.coding_agent.prompt_templates import PromptTemplate
 from pi.coding_agent.themes import Theme
@@ -259,3 +268,74 @@ def test_file_history_does_not_store_likely_api_keys(tmp_path):
     content = path.read_text(encoding="utf-8")
     assert "normal prompt" in content
     assert "sk-" not in content
+
+
+async def test_tool_only_message_does_not_render_empty_panel(tmp_path):
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        history_file=tmp_path / "history",
+    )
+    session._console.print = Mock()
+    message = AgentAssistantMessage(
+        content=[ToolCall(id="call-1", name="read", arguments={"path": "README.md"})]
+    )
+
+    await session._on_event(MessageStartEvent(message=message))
+    await session._on_event(MessageEndEvent(message=message))
+
+    assert session._live is None
+    session._console.print.assert_not_called()
+
+
+async def test_non_streaming_text_message_is_rendered_once(tmp_path):
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        history_file=tmp_path / "history",
+    )
+    session._console.print = Mock()
+    message = AgentAssistantMessage(content=[TextContent(text="answer")])
+
+    await session._on_event(MessageStartEvent(message=message))
+    await session._on_event(MessageEndEvent(message=message))
+
+    session._console.print.assert_called_once()
+    assert isinstance(session._console.print.call_args.args[0], Panel)
+
+
+async def test_turn_usage_is_aggregated_before_display(tmp_path):
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        history_file=tmp_path / "history",
+    )
+    session._console.print = Mock()
+
+    await session._on_event(
+        TurnEndEvent(
+            message=AgentAssistantMessage(
+                usage=Usage(input=100, output=20, total_tokens=120)
+            )
+        )
+    )
+    await session._on_event(
+        TurnEndEvent(
+            message=AgentAssistantMessage(
+                usage=Usage(input=200, output=30, cache_read=50, total_tokens=230)
+            )
+        )
+    )
+
+    session._console.print.assert_not_called()
+    session._print_request_usage()
+    session._console.print.assert_called_once_with(
+        "300 in / 50 out / 350 total tokens / 50 cached",
+        style=session._theme.muted,
+    )

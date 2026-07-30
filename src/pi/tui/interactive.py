@@ -35,7 +35,7 @@ from pi.agent.tools import ToolContext
 from pi.agent.types import AgentEvent, AgentTool, create_user_message
 from pi.ai.models import list_models
 from pi.ai.oauth import CredentialStore, get_default_credential_store
-from pi.ai.types import Model, ModelThinkingLevel
+from pi.ai.types import Model, ModelThinkingLevel, TextContent, ThinkingContent, Usage
 from pi.coding_agent.extensions import ExtensionCommand, ExtensionContext
 from pi.coding_agent.file_references import expand_file_references
 from pi.coding_agent.model_auth import contains_likely_api_key, ensure_model_auth
@@ -154,6 +154,7 @@ class InteractiveSession:
         self._current_thinking = ""
         self._live: Live | None = None
         self._agent_task: asyncio.Task[None] | None = None
+        self._request_usage = Usage()
         self._sessions_dir = sessions_dir
         self._session_id = session_id
         self._session_storage = session_storage
@@ -217,15 +218,56 @@ class InteractiveSession:
             output=None if interactive_terminal else DummyOutput(),
         )
 
-    def _update_live(self) -> None:
-        if self._live is None:
-            return
+    def _message_panel(self) -> Panel:
+        """根据当前流式内容创建消息面板。"""
         content = []
         if self._current_thinking:
             content.append(Text(self._current_thinking, style=self._theme.thinking))
         if self._current_text:
             content.append(Markdown(self._current_text))
-        self._live.update(Panel(Group(*content), title="piY", border_style=self._theme.primary))
+        return Panel(Group(*content), title="piY", border_style=self._theme.primary)
+
+    def _update_live(self) -> None:
+        """仅在收到可见内容后启动实时渲染，避免工具消息产生空框。"""
+        if not self._current_text and not self._current_thinking:
+            return
+        panel = self._message_panel()
+        if self._live is None:
+            self._live = Live(
+                panel,
+                console=self._console,
+                refresh_per_second=15,
+            )
+            self._live.start()
+            return
+        self._live.update(panel)
+
+    def _record_usage(self, usage: Usage) -> None:
+        """累计一次用户请求内所有模型轮次的 token 用量。"""
+        self._request_usage.input += usage.input
+        self._request_usage.output += usage.output
+        self._request_usage.cache_read += usage.cache_read
+        self._request_usage.cache_write += usage.cache_write
+        self._request_usage.total_tokens += usage.total_tokens
+
+    def _print_request_usage(self) -> None:
+        """在一次用户请求完全结束后输出一条汇总用量。"""
+        usage = self._request_usage
+        if not usage.total_tokens:
+            return
+        cache = f" / {usage.cache_read} cached" if usage.cache_read else ""
+        self._console.print(
+            f"{usage.input} in / {usage.output} out / "
+            f"{usage.total_tokens} total tokens{cache}",
+            style=self._theme.muted,
+        )
+
+    async def _run_agent_prompt(self, prompt: str) -> None:
+        """运行完整请求，并在所有工具轮次结束后输出汇总用量。"""
+        try:
+            await self._agent.prompt(prompt)
+        finally:
+            self._print_request_usage()
 
     async def _handle_command(self, prompt: str) -> tuple[bool, bool]:
         """处理斜杠命令，返回（是否已处理，是否退出）。"""
@@ -481,7 +523,8 @@ class InteractiveSession:
                 self._agent.steer(message)
                 self._console.print("Queued steering message.", style=self._theme.muted)
             return
-        self._agent_task = asyncio.create_task(self._agent.prompt(prompt))
+        self._request_usage = Usage()
+        self._agent_task = asyncio.create_task(self._run_agent_prompt(prompt))
 
     async def _on_event(self, event: AgentEvent) -> None:
         """处理 agent 事件用于显示。"""
@@ -489,12 +532,6 @@ class InteractiveSession:
         if event.type == "message_start":
             self._current_text = ""
             self._current_thinking = ""
-            self._live = Live(
-                Panel("", title="piY", border_style=self._theme.primary),
-                console=self._console,
-                refresh_per_second=15,
-            )
-            self._live.start()
         elif event.type == "text_delta":
             self._current_text += event.delta
             self._update_live()
@@ -505,6 +542,19 @@ class InteractiveSession:
             if self._live:
                 self._live.stop()
                 self._live = None
+            else:
+                self._current_text = "\n".join(
+                    block.text
+                    for block in event.message.content
+                    if isinstance(block, TextContent) and block.text
+                )
+                self._current_thinking = "\n".join(
+                    block.thinking
+                    for block in event.message.content
+                    if isinstance(block, ThinkingContent) and block.thinking
+                )
+                if self._current_text or self._current_thinking:
+                    self._console.print(self._message_panel())
             self._current_text = ""
             self._current_thinking = ""
         elif event.type == "tool_execution_start":
@@ -520,8 +570,6 @@ class InteractiveSession:
                 for block in event.result.content:
                     if hasattr(block, "text"):
                         self._console.print(f"  error: {block.text}", style=self._theme.error)
-            elif event.result:
-                self._console.print(f"  done: {event.tool_name}", style=self._theme.muted)
         elif event.type == "turn_end":
             if event.message.stop_reason == "aborted":
                 self._console.print("Aborted.", style=self._theme.muted)
@@ -529,12 +577,7 @@ class InteractiveSession:
                 self._console.print(
                     f"Error: {event.message.error_message}", style=self._theme.error
                 )
-            usage = event.message.usage
-            if usage.total_tokens:
-                self._console.print(
-                    f"{usage.input} in / {usage.output} out / {usage.total_tokens} total tokens",
-                    style=self._theme.muted,
-                )
+            self._record_usage(event.message.usage)
         elif event.type == "provider_retry":
             self._console.print(
                 f"Retry {event.attempt}/{event.max_retries} in {event.delay_ms} ms",
