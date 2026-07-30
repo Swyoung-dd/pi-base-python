@@ -164,6 +164,7 @@ async def run_interactive_mode(
         commands=commands,
         skills=skills,
         cwd=cwd,
+        history_file=config.config_dir / "history",
     )
     await session.run()
 

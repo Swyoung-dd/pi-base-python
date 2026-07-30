@@ -7,9 +7,17 @@
 from __future__ import annotations
 
 import inspect
+import signal
+import sys
 from pathlib import Path
 from typing import Any
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.history import FileHistory, InMemoryHistory
+from prompt_toolkit.input import DummyInput
+from prompt_toolkit.output import DummyOutput
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
@@ -44,6 +52,7 @@ class InteractiveSession:
         commands: dict[str, ExtensionCommand] | None = None,
         skills: list[Skill] | None = None,
         cwd: Path | None = None,
+        history_file: Path | None = None,
     ) -> None:
         self._console = Console()
         self._agent = Agent(
@@ -62,9 +71,32 @@ class InteractiveSession:
         self._current_thinking = ""
         self._live: Live | None = None
         self._sessions_dir = sessions_dir
+        self._session_id = session_id
         self._commands = commands or {}
         self._skills = {skill.name: skill for skill in skills or []}
         self._cwd = (cwd or Path.cwd()).resolve()
+        command_names = [
+            "/clear",
+            "/exit",
+            "/help",
+            "/model",
+            "/new",
+            "/resume",
+            "/sessions",
+            "/skill",
+            *[f"/{name}" for name in self._commands],
+            *[f"/skill:{name}" for name in self._skills],
+        ]
+        history = FileHistory(str(history_file)) if history_file else InMemoryHistory()
+        interactive_terminal = sys.stdin.isatty() and sys.stdout.isatty()
+        self._prompt_session: PromptSession[str] = PromptSession(
+            history=history,
+            auto_suggest=AutoSuggestFromHistory(),
+            completer=WordCompleter(sorted(command_names), sentence=True),
+            complete_while_typing=False,
+            input=None if interactive_terminal else DummyInput(),
+            output=None if interactive_terminal else DummyOutput(),
+        )
 
     def _update_live(self) -> None:
         if self._live is None:
@@ -174,6 +206,7 @@ class InteractiveSession:
                 self._console.print(f"Session not found: {session_id}", style="red")
                 return True, False
             await self._agent.switch_session(JsonlStorage(path), session_id)
+            self._session_id = session_id
             self._console.print(f"Session: {session_id}", style="dim")
             return True, False
         extension_command = self._commands.get(command.lstrip("/"))
@@ -224,13 +257,35 @@ class InteractiveSession:
                 for block in event.result.content:
                     if hasattr(block, "text"):
                         self._console.print(f"  [red]error: {block.text}[/red]")
-        elif event.type == "turn_end" and event.message.error_message:
-            self._console.print(f"[red]Error: {event.message.error_message}[/red]")
+            elif event.result:
+                self._console.print(f"  [dim]done: {event.tool_name}[/dim]")
+        elif event.type == "turn_end":
+            if event.message.stop_reason == "aborted":
+                self._console.print("[dim]Aborted.[/dim]")
+            elif event.message.error_message:
+                self._console.print(f"[red]Error: {event.message.error_message}[/red]")
+            usage = event.message.usage
+            if usage.total_tokens:
+                self._console.print(
+                    f"[dim]{usage.input} in / {usage.output} out / "
+                    f"{usage.total_tokens} total tokens[/dim]"
+                )
         elif event.type == "provider_retry":
             self._console.print(
                 f"Retry {event.attempt}/{event.max_retries} in {event.delay_ms} ms",
                 style="yellow",
             )
+        elif event.type == "context_compacted":
+            self._console.print(
+                f"[dim]Context compacted: {event.original_tokens} -> "
+                f"{event.compacted_tokens} tokens[/dim]"
+            )
+
+    def _bottom_toolbar(self) -> str:
+        model = self._agent.state.model
+        model_name = f"{model.provider}/{model.id}" if model else "no model"
+        session = self._session_id or "memory"
+        return f" {model_name} | session {session} "
 
     async def run(self) -> None:
         """运行交互式 REPL 循环。"""
@@ -244,21 +299,36 @@ class InteractiveSession:
         self._console.print(f"Model: [bold]{self._agent.state.model.id}[/bold]")
         self._console.print("Type your message and press Enter. Ctrl+C to exit.\n")
 
-        while True:
-            try:
-                prompt = self._console.input("[bold green]>>>[/bold green] ")
-                if not prompt.strip():
-                    continue
-                handled, should_exit = await self._handle_command(prompt)
-                if should_exit:
-                    break
-                if handled:
-                    continue
+        previous_sigint = signal.getsignal(signal.SIGINT)
 
-                await self._agent.prompt(expand_file_references(prompt, self._cwd))
-                self._console.print()
-            except (KeyboardInterrupt, EOFError):
-                self._console.print("\n[dim]Goodbye.[/dim]")
-                break
-            except Exception as exc:
-                self._console.print(f"[red]Error: {exc}[/red]")
+        def handle_sigint(signum, frame) -> None:
+            if self._agent.is_busy:
+                self._agent.abort()
+                return
+            raise KeyboardInterrupt
+
+        signal.signal(signal.SIGINT, handle_sigint)
+        try:
+            while True:
+                try:
+                    prompt = await self._prompt_session.prompt_async(
+                        ">>> ",
+                        bottom_toolbar=self._bottom_toolbar,
+                    )
+                    if not prompt.strip():
+                        continue
+                    handled, should_exit = await self._handle_command(prompt)
+                    if should_exit:
+                        break
+                    if handled:
+                        continue
+
+                    await self._agent.prompt(expand_file_references(prompt, self._cwd))
+                    self._console.print()
+                except (KeyboardInterrupt, EOFError):
+                    self._console.print("\n[dim]Goodbye.[/dim]")
+                    break
+                except Exception as exc:
+                    self._console.print(f"[red]Error: {exc}[/red]")
+        finally:
+            signal.signal(signal.SIGINT, previous_sigint)
