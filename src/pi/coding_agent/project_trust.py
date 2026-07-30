@@ -18,6 +18,7 @@ _PROTECTED_CONFIG_KEYS = {
     "enable_skills",
     "prompts",
     "enable_prompt_templates",
+    "theme",
 }
 
 
@@ -34,6 +35,9 @@ def has_protected_project_resources(config_dir: Path) -> bool:
         return True
     prompts_dir = config_dir / "prompts"
     if prompts_dir.is_dir() and any(prompts_dir.iterdir()):
+        return True
+    themes_dir = config_dir / "themes"
+    if themes_dir.is_dir() and any(themes_dir.iterdir()):
         return True
     config_file = config_dir / "config.yaml"
     if not config_file.is_file():

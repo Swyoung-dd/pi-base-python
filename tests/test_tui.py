@@ -9,6 +9,7 @@ from pi.ai.oauth import CredentialStore, resolve_stored_api_key, save_api_key
 from pi.ai.types import TextContent, Usage
 from pi.coding_agent.extensions import ExtensionContext
 from pi.coding_agent.prompt_templates import PromptTemplate
+from pi.coding_agent.themes import Theme
 from pi.tui.interactive import InteractiveSession, _format_tokens, _SafeFileHistory
 
 
@@ -138,6 +139,21 @@ def test_toolbar_shows_context_usage_and_percentage(tmp_path):
 
     assert f"ctx 10k/{_format_tokens(model.context_window)}" in toolbar
     assert f"({10_000 / model.context_window * 100:.1f}%)" in toolbar
+
+
+def test_interactive_session_accepts_custom_theme(tmp_path):
+    theme = Theme(name="test", primary="cyan", muted="white")
+
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        theme=theme,
+        history_file=tmp_path / "history",
+    )
+
+    assert session._theme is theme
 
 
 def test_busy_session_queues_prompt_as_steering(tmp_path, monkeypatch):

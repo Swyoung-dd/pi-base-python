@@ -36,6 +36,7 @@ from pi.coding_agent.sessions import list_sessions, resolve_session_id, session_
 from pi.coding_agent.setup import run_setup
 from pi.coding_agent.skills import format_skills_for_prompt, load_skills
 from pi.coding_agent.system_prompt import build_system_prompt
+from pi.coding_agent.themes import load_theme
 from pi.coding_agent.tools import (
     create_bash_tool,
     create_edit_tool,
@@ -95,12 +96,20 @@ async def _build_runtime(config, cwd: Path):
         context_files,
         format_skills_for_prompt(skills),
     ]
+    try:
+        theme = load_theme(
+            config.theme,
+            [config.config_dir / "themes", Path.home() / ".piy" / "themes"],
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
     return (
         tools,
         "\n\n".join(section for section in sections if section),
         extensions,
         skills,
         prompt_templates,
+        theme,
     )
 
 
@@ -133,7 +142,7 @@ async def run_print_mode(prompt: str, config, output_format: str = "text") -> No
     model = _resolve_model(config)
 
     cwd = Path.cwd()
-    tools, system_prompt, extensions, _, _ = await _build_runtime(config, cwd)
+    tools, system_prompt, extensions, _, _, _ = await _build_runtime(config, cwd)
 
     stream_fn = _make_stream_fn()
 
@@ -180,7 +189,9 @@ async def run_interactive_mode(
     model = _resolve_model(config)
 
     cwd = Path.cwd()
-    tools, system_prompt, extensions, skills, prompt_templates = await _build_runtime(config, cwd)
+    tools, system_prompt, extensions, skills, prompt_templates, theme = await _build_runtime(
+        config, cwd
+    )
 
     stream_fn = _make_stream_fn()
     session_id = await resolve_session_id(
@@ -212,6 +223,7 @@ async def run_interactive_mode(
         extension_context=extensions,
         skills=skills,
         prompt_templates=prompt_templates,
+        theme=theme,
         cwd=cwd,
         history_file=config.config_dir / "history",
         on_model_selected=persist_model,
@@ -264,6 +276,7 @@ async def print_auth_providers() -> None:
 @click.option("--auth-list", is_flag=True, help="List stored credentials and exit")
 @click.option("--no-skills", is_flag=True, help="Disable skills discovery")
 @click.option("--no-context-files", is_flag=True, help="Disable AGENTS.md/CLAUDE.md discovery")
+@click.option("--theme", "theme_name", default=None, help="Terminal theme name or YAML file")
 @click.option("--setup", "setup_config", is_flag=True, help="Run model setup and exit")
 @click.option(
     "--approve/--no-approve",
@@ -300,6 +313,7 @@ def main(
     auth_list,
     no_skills,
     no_context_files,
+    theme_name,
     setup_config,
     project_trust,
     output_format,
@@ -360,6 +374,8 @@ def main(
         config.enable_skills = False
     if no_context_files:
         config.enable_context_files = False
+    if theme_name:
+        config.theme = theme_name
 
     if prompt_text is not None:
         asyncio.run(run_print_mode(prompt_text, config, output_format))

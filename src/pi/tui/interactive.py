@@ -48,6 +48,7 @@ from pi.coding_agent.sessions import (
     session_path,
 )
 from pi.coding_agent.skills import Skill
+from pi.coding_agent.themes import Theme
 
 
 def _format_tokens(tokens: int) -> str:
@@ -98,12 +99,14 @@ class InteractiveSession:
         extension_context: ExtensionContext | None = None,
         skills: list[Skill] | None = None,
         prompt_templates: list[PromptTemplate] | None = None,
+        theme: Theme | None = None,
         cwd: Path | None = None,
         history_file: Path | None = None,
         credential_store: CredentialStore | None = None,
         on_model_selected: Callable[[Model], None] | None = None,
     ) -> None:
         self._cwd = (cwd or Path.cwd()).resolve()
+        self._theme = theme or Theme()
         self._console = Console()
         self._agent = Agent(
             AgentOptions(
@@ -190,10 +193,10 @@ class InteractiveSession:
             return
         content = []
         if self._current_thinking:
-            content.append(Text(self._current_thinking, style="dim"))
+            content.append(Text(self._current_thinking, style=self._theme.thinking))
         if self._current_text:
             content.append(Markdown(self._current_text))
-        self._live.update(Panel(Group(*content), title="piY", border_style="blue"))
+        self._live.update(Panel(Group(*content), title="piY", border_style=self._theme.primary))
 
     async def _handle_command(self, prompt: str) -> tuple[bool, bool]:
         """处理斜杠命令，返回（是否已处理，是否退出）。"""
@@ -212,16 +215,16 @@ class InteractiveSession:
                 "/templates  /<template> [arguments]  "
                 "/skill <name> [task]  /steer <message>  /follow-up <message>  "
                 "/clear  /help  /exit",
-                style="dim",
+                style=self._theme.muted,
             )
             return True, False
         if command == "/templates":
             if not self._prompt_templates:
-                self._console.print("No prompt templates.", style="dim")
+                self._console.print("No prompt templates.", style=self._theme.muted)
                 return True, False
             for template in self._prompt_templates.values():
                 description = f" - {template.description}" if template.description else ""
-                self._console.print(f"/{template.name}{description}", style="dim")
+                self._console.print(f"/{template.name}{description}", style=self._theme.muted)
             return True, False
         if command == "/model":
             models = list_models()
@@ -233,7 +236,10 @@ class InteractiveSession:
                     if argument in (model.id, f"{model.provider}/{model.id}")
                 ]
                 if len(matches) != 1:
-                    self._console.print(f"Unknown or ambiguous model: {argument}", style="red")
+                    self._console.print(
+                        f"Unknown or ambiguous model: {argument}",
+                        style=self._theme.error,
+                    )
                     return True, False
                 selected = matches[0]
             else:
@@ -246,7 +252,7 @@ class InteractiveSession:
                     )
                     self._console.print(
                         f"{index:>2}. {marker} {model.provider}/{model.id}",
-                        style="dim",
+                        style=self._theme.muted,
                     )
                 try:
                     selected_index = click.prompt(
@@ -254,7 +260,7 @@ class InteractiveSession:
                         type=click.IntRange(1, len(models)),
                     )
                 except (click.Abort, EOFError):
-                    self._console.print("Model selection cancelled.", style="dim")
+                    self._console.print("Model selection cancelled.", style=self._theme.muted)
                     return True, False
                 selected = models[selected_index - 1]
 
@@ -270,23 +276,23 @@ class InteractiveSession:
                 self._on_model_selected(selected)
             self._console.print(
                 f"Model: {selected.provider}/{selected.id}",
-                style="dim",
+                style=self._theme.muted,
             )
             return True, False
         if command == "/tree":
             if self._session_storage is None:
-                self._console.print("Session storage is disabled.", style="yellow")
+                self._console.print("Session storage is disabled.", style=self._theme.warning)
                 return True, False
             entries = await self._session_storage.get_entries()
             leaf_id = await self._session_storage.get_leaf_id()
-            self._console.print(format_session_tree(entries, leaf_id), style="dim")
+            self._console.print(format_session_tree(entries, leaf_id), style=self._theme.muted)
             return True, False
         if command == "/branch":
             if self._session_storage is None:
-                self._console.print("Session storage is disabled.", style="yellow")
+                self._console.print("Session storage is disabled.", style=self._theme.warning)
                 return True, False
             if not argument:
-                self._console.print("Usage: /branch <entry-id>", style="yellow")
+                self._console.print("Usage: /branch <entry-id>", style=self._theme.warning)
                 return True, False
             try:
                 entry_id = resolve_entry_id(
@@ -295,7 +301,7 @@ class InteractiveSession:
                 )
                 await self._session_storage.branch_from(entry_id)
             except (KeyError, ValueError) as exc:
-                self._console.print(str(exc), style="red")
+                self._console.print(str(exc), style=self._theme.error)
                 return True, False
             await self._agent.switch_session(self._session_storage, self._session_id)
             await self._restore_session_model()
@@ -303,7 +309,7 @@ class InteractiveSession:
                 "session_switch",
                 {"reason": "branch", "session_id": self._session_id},
             )
-            self._console.print(f"Branched from: {entry_id}", style="dim")
+            self._console.print(f"Branched from: {entry_id}", style=self._theme.muted)
             return True, False
         if command == "/skill" or command.startswith("/skill:"):
             if command.startswith("/skill:"):
@@ -314,11 +320,14 @@ class InteractiveSession:
                 skill_name = skill_parts[0] if skill_parts else ""
                 skill_argument = skill_parts[1] if len(skill_parts) > 1 else ""
             if not skill_name:
-                self._console.print("  ".join(sorted(self._skills)) or "No skills.", style="dim")
+                self._console.print(
+                    "  ".join(sorted(self._skills)) or "No skills.",
+                    style=self._theme.muted,
+                )
                 return True, False
             skill = self._skills.get(skill_name)
             if skill is None:
-                self._console.print(f"Skill not found: {skill_name}", style="red")
+                self._console.print(f"Skill not found: {skill_name}", style=self._theme.error)
                 return True, False
             prompt = (
                 f"Apply the following skill instructions.\n\n{skill.read()}"
@@ -328,7 +337,7 @@ class InteractiveSession:
             return True, False
         if command in ("/steer", "/follow-up"):
             if not argument:
-                self._console.print(f"Usage: {command} <message>", style="yellow")
+                self._console.print(f"Usage: {command} <message>", style=self._theme.warning)
                 return True, False
             self._submit_agent_prompt(
                 expand_file_references(argument, self._cwd),
@@ -337,32 +346,32 @@ class InteractiveSession:
             return True, False
         if command == "/sessions":
             if self._sessions_dir is None:
-                self._console.print("Session storage is disabled.", style="yellow")
+                self._console.print("Session storage is disabled.", style=self._theme.warning)
                 return True, False
             sessions = await list_sessions(self._sessions_dir)
             if not sessions:
-                self._console.print("No sessions.", style="dim")
+                self._console.print("No sessions.", style=self._theme.muted)
             for item in sessions:
                 self._console.print(
                     f"{item.session_id}  {item.message_count:>4}  {item.preview}",
-                    style="dim",
+                    style=self._theme.muted,
                 )
             return True, False
         if command in ("/new", "/resume"):
             if self._sessions_dir is None:
-                self._console.print("Session storage is disabled.", style="yellow")
+                self._console.print("Session storage is disabled.", style=self._theme.warning)
                 return True, False
             session_id = argument if command == "/resume" else new_session_id()
             if not session_id:
-                self._console.print("Usage: /resume <session-id>", style="yellow")
+                self._console.print("Usage: /resume <session-id>", style=self._theme.warning)
                 return True, False
             try:
                 path = session_path(self._sessions_dir, session_id)
             except ValueError as exc:
-                self._console.print(str(exc), style="red")
+                self._console.print(str(exc), style=self._theme.error)
                 return True, False
             if command == "/resume" and not path.exists():
-                self._console.print(f"Session not found: {session_id}", style="red")
+                self._console.print(f"Session not found: {session_id}", style=self._theme.error)
                 return True, False
             storage = JsonlStorage(path)
             if command == "/new":
@@ -380,7 +389,7 @@ class InteractiveSession:
                 "session_switch",
                 {"reason": command.lstrip("/"), "session_id": session_id},
             )
-            self._console.print(f"Session: {session_id}", style="dim")
+            self._console.print(f"Session: {session_id}", style=self._theme.muted)
             return True, False
         extension_command = self._commands.get(command.lstrip("/"))
         if extension_command is not None:
@@ -397,7 +406,7 @@ class InteractiveSession:
             )
             return True, False
         if prompt.startswith("/"):
-            self._console.print(f"Unknown command: {command}", style="yellow")
+            self._console.print(f"Unknown command: {command}", style=self._theme.warning)
             return True, False
         return False, False
 
@@ -407,10 +416,10 @@ class InteractiveSession:
             message = create_user_message(prompt)
             if follow_up:
                 self._agent.follow_up(message)
-                self._console.print("[dim]Queued follow-up.[/dim]")
+                self._console.print("Queued follow-up.", style=self._theme.muted)
             else:
                 self._agent.steer(message)
-                self._console.print("[dim]Queued steering message.[/dim]")
+                self._console.print("Queued steering message.", style=self._theme.muted)
             return
         self._agent_task = asyncio.create_task(self._agent.prompt(prompt))
 
@@ -421,7 +430,7 @@ class InteractiveSession:
             self._current_text = ""
             self._current_thinking = ""
             self._live = Live(
-                Panel("", title="piY", border_style="blue"),
+                Panel("", title="piY", border_style=self._theme.primary),
                 console=self._console,
                 refresh_per_second=15,
             )
@@ -444,34 +453,36 @@ class InteractiveSession:
                 self._live = None
             self._current_text = ""
             self._current_thinking = ""
-            self._console.print(f"  [dim]-> {event.tool_name}[/dim]")
+            self._console.print(f"  -> {event.tool_name}", style=self._theme.muted)
         elif event.type == "tool_execution_end":
             if event.result and event.result.is_error:
                 for block in event.result.content:
                     if hasattr(block, "text"):
-                        self._console.print(f"  [red]error: {block.text}[/red]")
+                        self._console.print(f"  error: {block.text}", style=self._theme.error)
             elif event.result:
-                self._console.print(f"  [dim]done: {event.tool_name}[/dim]")
+                self._console.print(f"  done: {event.tool_name}", style=self._theme.muted)
         elif event.type == "turn_end":
             if event.message.stop_reason == "aborted":
-                self._console.print("[dim]Aborted.[/dim]")
+                self._console.print("Aborted.", style=self._theme.muted)
             elif event.message.error_message:
-                self._console.print(f"[red]Error: {event.message.error_message}[/red]")
+                self._console.print(
+                    f"Error: {event.message.error_message}", style=self._theme.error
+                )
             usage = event.message.usage
             if usage.total_tokens:
                 self._console.print(
-                    f"[dim]{usage.input} in / {usage.output} out / "
-                    f"{usage.total_tokens} total tokens[/dim]"
+                    f"{usage.input} in / {usage.output} out / {usage.total_tokens} total tokens",
+                    style=self._theme.muted,
                 )
         elif event.type == "provider_retry":
             self._console.print(
                 f"Retry {event.attempt}/{event.max_retries} in {event.delay_ms} ms",
-                style="yellow",
+                style=self._theme.warning,
             )
         elif event.type == "context_compacted":
             self._console.print(
-                f"[dim]Context compacted: {event.original_tokens} -> "
-                f"{event.compacted_tokens} tokens[/dim]"
+                f"Context compacted: {event.original_tokens} -> {event.compacted_tokens} tokens",
+                style=self._theme.muted,
             )
 
     def _bottom_toolbar(self) -> str:
@@ -513,7 +524,7 @@ class InteractiveSession:
         for failure in failures:
             self._console.print(
                 f"Extension {failure.source} failed during {failure.event_type}: {failure.error}",
-                style="red",
+                style=self._theme.error,
             )
 
     async def run(self) -> None:
@@ -528,7 +539,10 @@ class InteractiveSession:
         )
 
         self._console.print(
-            Panel(Text(f"piY v{__version__} - coding agent", justify="center"), style="blue")
+            Panel(
+                Text(f"piY v{__version__} - coding agent", justify="center"),
+                border_style=self._theme.primary,
+            )
         )
         self._console.print(f"Model: [bold]{self._agent.state.model.id}[/bold]")
         self._console.print("Type your message and press Enter. Ctrl+C to exit.\n")
@@ -554,8 +568,9 @@ class InteractiveSession:
                         continue
                     if contains_likely_api_key(prompt):
                         self._console.print(
-                            "[red]Input looks like an API key and was not sent. "
-                            "Use /model to configure credentials.[/red]"
+                            "Input looks like an API key and was not sent. "
+                            "Use /model to configure credentials.",
+                            style=self._theme.error,
                         )
                         continue
                     handled, should_exit = await self._handle_command(prompt)
@@ -566,10 +581,10 @@ class InteractiveSession:
 
                     self._submit_agent_prompt(expand_file_references(prompt, self._cwd))
                 except (KeyboardInterrupt, EOFError):
-                    self._console.print("\n[dim]Goodbye.[/dim]")
+                    self._console.print("\nGoodbye.", style=self._theme.muted)
                     break
                 except Exception as exc:
-                    self._console.print(f"[red]Error: {exc}[/red]")
+                    self._console.print(f"Error: {exc}", style=self._theme.error)
         finally:
             if self._agent.is_busy:
                 self._agent.abort()

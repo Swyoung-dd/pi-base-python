@@ -23,6 +23,7 @@ skills:
   - skills
 prompts:
   - prompts
+theme: local-theme
 """,
         encoding="utf-8",
     )
@@ -35,6 +36,7 @@ prompts:
     assert config.extension_paths == []
     assert config.skill_paths == []
     assert config.prompt_paths == []
+    assert config.theme == "default"
 
 
 def test_trust_store_inherits_nearest_parent_decision(tmp_path):
