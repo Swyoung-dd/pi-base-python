@@ -1,6 +1,7 @@
 """提供商注册与兼容端点测试。"""
 
-from pi.ai.providers import list_providers, openai
+from pi.ai.providers import get_provider, list_providers, openai
+from pi.ai.providers.deepseek import DeepSeekProvider
 from pi.ai.streaming import DoneEvent
 from pi.ai.types import (
     AssistantMessage,
@@ -24,6 +25,7 @@ def test_builtin_provider_ecosystem_is_registered():
         "openrouter",
         "xai",
     }.issubset(list_providers())
+    assert isinstance(get_provider("deepseek"), DeepSeekProvider)
 
 
 async def test_openai_compatible_provider_merges_headers_and_allows_local_auth(

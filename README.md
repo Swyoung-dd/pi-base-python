@@ -21,6 +21,15 @@ piY
 
 项目配置位于 `.piy/config.yaml`。自定义模型可写入 `.piy/models.yaml`。
 
+使用 DeepSeek V4：
+
+```powershell
+$env:DEEPSEEK_API_KEY="你的 API Key"
+piY --setup
+```
+
+在模型列表中选择 `deepseek/deepseek-v4-flash` 或 `deepseek/deepseek-v4-pro`。
+
 ## 命令
 
 ```bash

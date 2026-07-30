@@ -40,13 +40,16 @@ def register_openai_compatible(
 def _register_builtins() -> None:
     """首次导入时注册内置提供商。"""
     from pi.ai.providers.anthropic import AnthropicProvider
+    from pi.ai.providers.deepseek import DeepSeekProvider
     from pi.ai.providers.openai import OpenAIProvider
 
     if "openai" not in _providers:
         register_provider(OpenAIProvider())
     if "anthropic" not in _providers:
         register_provider(AnthropicProvider())
-    for provider_id in ("deepseek", "groq", "mistral", "openrouter", "xai"):
+    if "deepseek" not in _providers:
+        register_provider(DeepSeekProvider())
+    for provider_id in ("groq", "mistral", "openrouter", "xai"):
         if provider_id not in _providers:
             register_openai_compatible(provider_id)
     for provider_id in ("lmstudio", "ollama"):

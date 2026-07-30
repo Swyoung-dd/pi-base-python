@@ -136,30 +136,13 @@ class OpenAIProvider(BaseProvider):
             for tool in context.tools
         ]
 
-    async def stream(
+    def build_payload(
         self,
         model: Model,
         context: Context,
         options: StreamOptions | None = None,
-    ) -> EventStream:
-        stream_obj = EventStream()
-        api_key = await self.resolve_api_key(options)
-        if not api_key and self._requires_api_key:
-            await self._emit_error(
-                stream_obj,
-                model,
-                f"No API key for provider '{self.provider_id}'",
-            )
-            return stream_obj
-
-        base_url = model.base_url or "https://api.openai.com/v1"
-        url = f"{base_url.rstrip('/')}/chat/completions"
-        headers = self.merge_headers(
-            self.build_headers(api_key or "", options),
-            model,
-            options,
-        )
-
+    ) -> dict[str, Any]:
+        """构建 OpenAI Chat Completions 请求体。"""
         payload: dict[str, Any] = {
             "model": model.id,
             "messages": self.convert_messages(context),
@@ -184,6 +167,33 @@ class OpenAIProvider(BaseProvider):
                     "max": "high",
                 }
                 payload["reasoning_effort"] = effort_map[options.thinking_level.value]
+        return payload
+
+    async def stream(
+        self,
+        model: Model,
+        context: Context,
+        options: StreamOptions | None = None,
+    ) -> EventStream:
+        stream_obj = EventStream()
+        api_key = await self.resolve_api_key(options)
+        if not api_key and self._requires_api_key:
+            await self._emit_error(
+                stream_obj,
+                model,
+                f"No API key for provider '{self.provider_id}'",
+            )
+            return stream_obj
+
+        base_url = model.base_url or "https://api.openai.com/v1"
+        url = f"{base_url.rstrip('/')}/chat/completions"
+        headers = self.merge_headers(
+            self.build_headers(api_key or "", options),
+            model,
+            options,
+        )
+
+        payload = self.build_payload(model, context, options)
 
         max_retries = options.max_retries if options and options.max_retries is not None else 2
         timeout = options.timeout_ms / 1000 if options and options.timeout_ms else 600.0

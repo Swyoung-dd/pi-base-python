@@ -17,6 +17,18 @@ def test_generated_model_catalog_is_current():
     assert result.returncode == 0
 
 
+def test_deepseek_v4_models_are_available():
+    flash = get_model("deepseek-v4-flash", "deepseek")
+    pro = get_model("deepseek-v4-pro", "deepseek")
+
+    assert flash is not None
+    assert pro is not None
+    assert flash.base_url == "https://api.deepseek.com"
+    assert flash.reasoning
+    assert flash.context_window == 1_000_000
+    assert pro.max_tokens == 393_216
+
+
 def test_custom_model_file_registers_and_overrides_models(tmp_path):
     path = tmp_path / "models.yaml"
     path.write_text(
