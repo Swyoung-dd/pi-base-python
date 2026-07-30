@@ -16,113 +16,27 @@ import click
 from pi.agent.agent import Agent, AgentOptions
 from pi.agent.session import JsonlStorage
 from pi.agent.tools import ToolContext
-from pi.agent.types import AgentTool
 from pi.ai.models import get_model, list_models
 from pi.ai.oauth import OAuthEvent, get_default_credential_store, login_oauth
 from pi.ai.oauth_xai import register_xai_oauth
-from pi.ai.providers.registry import get_provider
 from pi.ai.types import ModelThinkingLevel
 from pi.coding_agent.config import load_config, save_config
-from pi.coding_agent.context_files import format_context_files, load_context_files
-from pi.coding_agent.extensions import load_extensions
 from pi.coding_agent.file_references import expand_file_references
 from pi.coding_agent.output import PrintRenderer
 from pi.coding_agent.project_trust import (
     has_protected_project_resources,
     resolve_project_trust,
 )
-from pi.coding_agent.prompt_templates import load_prompt_templates
+from pi.coding_agent.runtime import build_runtime_resources, make_stream_fn
 from pi.coding_agent.sessions import list_sessions, resolve_session_id, session_path
 from pi.coding_agent.setup import run_setup
-from pi.coding_agent.skills import format_skills_for_prompt, load_skills
-from pi.coding_agent.system_prompt import build_system_prompt
-from pi.coding_agent.themes import load_theme
-from pi.coding_agent.tools import (
-    create_bash_tool,
-    create_edit_tool,
-    create_find_tool,
-    create_grep_tool,
-    create_ls_tool,
-    create_read_tool,
-    create_write_tool,
-)
-
-
-def _build_tools(cwd: Path) -> list[AgentTool]:
-    return [
-        create_read_tool(),
-        create_write_tool(),
-        create_edit_tool(),
-        create_bash_tool(),
-        create_ls_tool(),
-        create_find_tool(),
-        create_grep_tool(),
-    ]
 
 
 async def _build_runtime(config, cwd: Path):
-    extensions = await load_extensions(
-        config.extension_paths,
-        config.enable_entrypoint_extensions,
-    )
-    tools = [*_build_tools(cwd), *extensions.tools]
-    tool_names = [tool.name for tool in tools]
-    if len(tool_names) != len(set(tool_names)):
-        raise click.ClickException("Extension tool name conflicts with a built-in tool")
-    skills = []
-    if config.enable_skills:
-        skill_paths = [
-            *config.skill_paths,
-            config.config_dir / "skills",
-            Path.home() / ".piy" / "skills",
-        ]
-        skills = load_skills([path for path in skill_paths if path.exists()])
-    prompt_templates = []
-    if config.enable_prompt_templates:
-        prompt_paths = [
-            *config.prompt_paths,
-            config.config_dir / "prompts",
-            Path.home() / ".piy" / "prompts",
-        ]
-        prompt_templates = load_prompt_templates([path for path in prompt_paths if path.exists()])
-    system_prompt = build_system_prompt(cwd, tool_names)
-    context_files = (
-        format_context_files(load_context_files(cwd)) if config.enable_context_files else ""
-    )
-    sections = [
-        config.system_prompt,
-        *extensions.system_prompt_sections,
-        system_prompt,
-        context_files,
-        format_skills_for_prompt(skills),
-    ]
     try:
-        theme = load_theme(
-            config.theme,
-            [config.config_dir / "themes", Path.home() / ".piy" / "themes"],
-        )
+        return await build_runtime_resources(config, cwd)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
-    return (
-        tools,
-        "\n\n".join(section for section in sections if section),
-        extensions,
-        skills,
-        prompt_templates,
-        theme,
-    )
-
-
-def _make_stream_fn():
-    """创建按当前模型动态选择 provider 的 stream 函数。"""
-
-    async def stream_fn(m, ctx, options):
-        provider = get_provider(m.provider)
-        if provider is None:
-            raise RuntimeError(f"No provider registered for: {m.provider}")
-        return await provider.stream(m, ctx, options)
-
-    return stream_fn
 
 
 def _resolve_model(config):
@@ -144,7 +58,7 @@ async def run_print_mode(prompt: str, config, output_format: str = "text") -> No
     cwd = Path.cwd()
     tools, system_prompt, extensions, _, _, _ = await _build_runtime(config, cwd)
 
-    stream_fn = _make_stream_fn()
+    stream_fn = make_stream_fn()
 
     agent = Agent(
         AgentOptions(
@@ -193,7 +107,7 @@ async def run_interactive_mode(
         config, cwd
     )
 
-    stream_fn = _make_stream_fn()
+    stream_fn = make_stream_fn()
     session_id = await resolve_session_id(
         config.sessions_dir,
         requested_id=requested_session_id,
@@ -277,6 +191,7 @@ async def print_auth_providers() -> None:
 @click.option("--no-skills", is_flag=True, help="Disable skills discovery")
 @click.option("--no-context-files", is_flag=True, help="Disable AGENTS.md/CLAUDE.md discovery")
 @click.option("--theme", "theme_name", default=None, help="Terminal theme name or YAML file")
+@click.option("--rpc", "rpc_mode", is_flag=True, help="Run stdin/stdout JSONL RPC mode")
 @click.option("--setup", "setup_config", is_flag=True, help="Run model setup and exit")
 @click.option(
     "--approve/--no-approve",
@@ -314,6 +229,7 @@ def main(
     no_skills,
     no_context_files,
     theme_name,
+    rpc_mode,
     setup_config,
     project_trust,
     output_format,
@@ -377,7 +293,23 @@ def main(
     if theme_name:
         config.theme = theme_name
 
-    if prompt_text is not None:
+    if rpc_mode:
+        if prompt_text is not None:
+            raise click.UsageError("--rpc cannot be combined with --prompt")
+        from pi.coding_agent.rpc import serve_stdio
+        from pi.coding_agent.sdk import create_coding_agent
+
+        async def run_rpc() -> None:
+            runtime = await create_coding_agent(
+                config=config,
+                cwd=project_dir,
+                session_id=session_id,
+                persist_session=True,
+            )
+            await serve_stdio(runtime)
+
+        asyncio.run(run_rpc())
+    elif prompt_text is not None:
         asyncio.run(run_print_mode(prompt_text, config, output_format))
     else:
         if output_format != "text":

@@ -171,6 +171,11 @@ class Agent:
     def context_token_limit(self) -> int | None:
         return self._context_token_limit
 
+    @property
+    def session_storage(self) -> SessionStorage | None:
+        """返回当前会话存储，供嵌入层执行显式状态操作。"""
+        return self._session_storage
+
     def get_context_usage(self) -> ContextUsage | None:
         """返回当前会话上下文使用量；无窗口信息时返回 None。"""
         model = self._state.model

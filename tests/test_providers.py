@@ -11,7 +11,7 @@ from pi.ai.types import (
     StreamOptions,
     TextContent,
 )
-from pi.coding_agent import cli
+from pi.coding_agent import runtime
 
 
 def test_builtin_provider_ecosystem_is_registered():
@@ -90,8 +90,8 @@ async def test_stream_function_resolves_provider_for_current_model(monkeypatch):
         "first": FakeProvider("first"),
         "second": FakeProvider("second"),
     }
-    monkeypatch.setattr(cli, "get_provider", providers.get)
-    stream_fn = cli._make_stream_fn()
+    monkeypatch.setattr(runtime, "get_provider", providers.get)
+    stream_fn = runtime.make_stream_fn()
     first = Model(id="one", name="One", api="test", provider="first")
     second = Model(id="two", name="Two", api="test", provider="second")
 
