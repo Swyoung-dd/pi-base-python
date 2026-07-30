@@ -136,6 +136,10 @@ class Agent:
     def is_busy(self) -> bool:
         return not self._idle_event.is_set()
 
+    @property
+    def context_token_limit(self) -> int | None:
+        return self._context_token_limit
+
     def subscribe(self, listener: AgentListener) -> Callable[[], None]:
         self._listeners.append(listener)
         return lambda: self._listeners.remove(listener) if listener in self._listeners else None
@@ -182,6 +186,17 @@ class Agent:
         self._session_loaded = False
         self.reset()
         await self.restore()
+
+    def set_model(self, model: Model) -> None:
+        """在空闲状态切换后续请求使用的模型。"""
+        if self.is_busy:
+            raise RuntimeError("Agent is already processing")
+        self._state.model = model
+        self._context_token_limit = (
+            max(1, model.context_window - (model.max_tokens or 4096))
+            if model.context_window
+            else None
+        )
 
     def reset(self) -> None:
         self._state.messages.clear()

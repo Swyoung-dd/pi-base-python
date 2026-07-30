@@ -26,6 +26,7 @@ from pi.coding_agent.extensions import load_extensions
 from pi.coding_agent.file_references import expand_file_references
 from pi.coding_agent.output import PrintRenderer
 from pi.coding_agent.sessions import list_sessions, resolve_session_id, session_path
+from pi.coding_agent.setup import run_setup
 from pi.coding_agent.skills import format_skills_for_prompt, load_skills
 from pi.coding_agent.system_prompt import build_system_prompt
 from pi.coding_agent.tools import (
@@ -208,6 +209,7 @@ async def print_auth_providers() -> None:
 @click.option("--logout", "logout_provider", default=None, help="Remove stored OAuth credentials")
 @click.option("--auth-list", is_flag=True, help="List stored OAuth providers and exit")
 @click.option("--no-skills", is_flag=True, help="Disable skills discovery")
+@click.option("--setup", "setup_config", is_flag=True, help="Run model setup and exit")
 @click.option(
     "--output",
     "output_format",
@@ -236,6 +238,7 @@ def main(
     logout_provider,
     auth_list,
     no_skills,
+    setup_config,
     output_format,
     thinking,
     list_models_flag,
@@ -263,6 +266,11 @@ def main(
     if auth_list:
         asyncio.run(print_auth_providers())
         return
+    if setup_config:
+        run_setup(config)
+        return
+    if not config.is_configured and prompt_text is None and click.get_text_stream("stdin").isatty():
+        run_setup(config)
     if list_sessions:
         asyncio.run(print_sessions(config))
         return

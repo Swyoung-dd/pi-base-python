@@ -20,6 +20,7 @@ from pi.agent.agent import Agent, AgentOptions
 from pi.agent.session.base import SessionStorage
 from pi.agent.session.jsonl import JsonlStorage
 from pi.agent.types import AgentEvent, AgentTool
+from pi.ai.models import list_models
 from pi.ai.types import Model, ModelThinkingLevel
 from pi.coding_agent.extensions import ExtensionCommand
 from pi.coding_agent.file_references import expand_file_references
@@ -87,7 +88,38 @@ class InteractiveSession:
             return True, False
         if command == "/help":
             self._console.print(
-                "/new  /resume <id>  /sessions  /skill <name> [task]  /clear  /help  /exit",
+                "/new  /resume <id>  /sessions  /model [provider/id]  "
+                "/skill <name> [task]  /clear  /help  /exit",
+                style="dim",
+            )
+            return True, False
+        if command == "/model":
+            if not argument:
+                current = self._agent.state.model
+                for model in list_models():
+                    marker = (
+                        "*"
+                        if current
+                        and (
+                            model.provider,
+                            model.id,
+                        )
+                        == (current.provider, current.id)
+                        else " "
+                    )
+                    self._console.print(f"{marker} {model.provider}/{model.id}", style="dim")
+                return True, False
+            matches = [
+                model
+                for model in list_models()
+                if argument in (model.id, f"{model.provider}/{model.id}")
+            ]
+            if len(matches) != 1:
+                self._console.print(f"Unknown or ambiguous model: {argument}", style="red")
+                return True, False
+            self._agent.set_model(matches[0])
+            self._console.print(
+                f"Model: {matches[0].provider}/{matches[0].id}",
                 style="dim",
             )
             return True, False

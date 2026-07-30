@@ -28,6 +28,7 @@ class Config:
     enable_entrypoint_extensions: bool = False
     skill_paths: list[Path] = field(default_factory=list)
     enable_skills: bool = True
+    is_configured: bool = False
     config_dir: Path = field(default_factory=lambda: Path.cwd() / ".pi")
     sessions_dir: Path = field(default_factory=lambda: Path.cwd() / ".pi" / "sessions")
 
@@ -41,6 +42,7 @@ def load_config(config_dir: Path | None = None) -> Config:
 
     config_file = config_dir / "config.yaml"
     if config_file.exists():
+        config.is_configured = True
         with open(config_file, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         if "model" in data:
@@ -84,3 +86,22 @@ def load_config(config_dir: Path | None = None) -> Config:
 
     config.sessions_dir.mkdir(parents=True, exist_ok=True)
     return config
+
+
+def save_config(config: Config) -> Path:
+    """原子写入用户可编辑的核心配置。"""
+    config.config_dir.mkdir(parents=True, exist_ok=True)
+    path = config.config_dir / "config.yaml"
+    temporary = path.with_suffix(".yaml.tmp")
+    data = {
+        "model": config.model,
+        "provider": config.provider,
+        "thinking_level": config.thinking_level,
+    }
+    temporary.write_text(
+        yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+    config.is_configured = True
+    return path
