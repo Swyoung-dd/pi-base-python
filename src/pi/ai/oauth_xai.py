@@ -77,7 +77,7 @@ class XaiOAuthFlow:
     async def login(self, notify: OAuthNotifier) -> OAuthCredential:
         status, body = await _post_form(
             XAI_DEVICE_CODE_URL,
-            {"client_id": XAI_CLIENT_ID, "scope": XAI_SCOPE, "referrer": "pi"},
+            {"client_id": XAI_CLIENT_ID, "scope": XAI_SCOPE, "referrer": "piy"},
         )
         if status >= 400:
             raise RuntimeError(f"xAI OAuth device authorization failed (HTTP {status})")

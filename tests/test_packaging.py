@@ -3,9 +3,18 @@
 import os
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 from pi import __version__
+
+
+def test_distribution_and_command_use_piy_name():
+    root = Path(__file__).resolve().parents[1]
+    metadata = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert metadata["project"]["name"] == "piY"
+    assert metadata["project"]["scripts"] == {"piY": "pi.coding_agent.cli:main"}
 
 
 def test_python_module_entrypoint_reports_version():
@@ -23,4 +32,4 @@ def test_python_module_entrypoint_reports_version():
     )
 
     assert result.returncode == 0
-    assert result.stdout.strip() == f"pi {__version__}"
+    assert result.stdout.strip() == f"piY {__version__}"

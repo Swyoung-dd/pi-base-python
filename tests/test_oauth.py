@@ -5,6 +5,7 @@ import time
 
 import pytest
 
+from pi.ai.auth import get_api_key
 from pi.ai.oauth import (
     OAuthCredential,
     OAuthCredentialStore,
@@ -36,6 +37,12 @@ class _FakeFlow:
         )
 
 
+def test_generic_api_key_uses_piy_prefix(monkeypatch):
+    monkeypatch.setenv("PIY_API_KEY_CUSTOM", "custom-key")
+
+    assert get_api_key("custom") == "custom-key"
+
+
 async def test_concurrent_oauth_resolution_refreshes_once(tmp_path):
     store = OAuthCredentialStore(tmp_path / "auth.json")
     expired = OAuthCredential(access="old", refresh="refresh", expires=1)
@@ -55,7 +62,7 @@ async def test_concurrent_oauth_resolution_refreshes_once(tmp_path):
 
 async def test_provider_uses_stored_oauth_bearer_token(tmp_path, monkeypatch):
     auth_file = tmp_path / "auth.json"
-    monkeypatch.setenv("PI_AUTH_FILE", str(auth_file))
+    monkeypatch.setenv("PIY_AUTH_FILE", str(auth_file))
     store = OAuthCredentialStore(auth_file)
     await store.modify(
         "xai",

@@ -16,5 +16,5 @@ venv/
 .pytest_cache/
 *.sqlite
 *.db
-.pi/
+.piy/
 .idea

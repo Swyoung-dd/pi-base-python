@@ -21,6 +21,21 @@ def test_setup_selects_and_persists_model(tmp_path, monkeypatch):
     assert (restored.provider, restored.model) == (selected.provider, selected.id)
 
 
+def test_default_config_uses_piy_directory_and_environment(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PIY_MODEL", "configured-model")
+    monkeypatch.setenv("PIY_PROVIDER", "configured-provider")
+    monkeypatch.setenv("PIY_THINKING", "high")
+
+    config = load_config()
+
+    assert config.config_dir == tmp_path / ".piy"
+    assert config.sessions_dir == tmp_path / ".piy" / "sessions"
+    assert config.model == "configured-model"
+    assert config.provider == "configured-provider"
+    assert config.thinking_level == "high"
+
+
 def test_agent_model_switch_updates_context_limit():
     initial = Model(
         id="initial",

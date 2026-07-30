@@ -12,7 +12,7 @@ from pi.coding_agent.cli import main
 def test_print_mode_with_project_model_and_extension_provider():
     runner = CliRunner()
     with runner.isolated_filesystem():
-        config_dir = Path(".pi")
+        config_dir = Path(".piy")
         config_dir.mkdir()
         (config_dir / "config.yaml").write_text(
             """model: fake-model

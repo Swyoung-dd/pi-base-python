@@ -23,14 +23,14 @@ def get_api_key(provider: str) -> str | None:
     """从环境变量解析提供商的 API 密钥。
 
     先检查提供商特定的环境变量，再回退到通用的
-    PI_API_KEY_{PROVIDER} 模式。
+    PIY_API_KEY_{PROVIDER} 模式。
     """
     env_keys = _ENV_KEY_MAP.get(provider, [])
     for key in env_keys:
         val = os.environ.get(key)
         if val:
             return val
-    generic = os.environ.get(f"PI_API_KEY_{provider.upper()}")
+    generic = os.environ.get(f"PIY_API_KEY_{provider.upper()}")
     if generic:
         return generic
     return None

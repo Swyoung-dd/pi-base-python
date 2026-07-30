@@ -1,4 +1,4 @@
-"""Pi 编码 agent 的 CLI 入口。
+"""piY 编码 agent 的 CLI 入口。
 
 支持：
 - 交互模式（默认）：带流式输出的 REPL
@@ -64,7 +64,7 @@ async def _build_runtime(config, cwd: Path):
     skills = []
     if config.enable_skills:
         skill_paths = [
-            Path.home() / ".pi" / "skills",
+            Path.home() / ".piy" / "skills",
             config.config_dir / "skills",
             *config.skill_paths,
         ]
@@ -245,11 +245,11 @@ def main(
     list_models_flag,
     version,
 ):
-    """Pi - 终端中的 AI 编码 agent。"""
+    """piY - 终端中的 AI 编码 agent。"""
     from pi import __version__
 
     if version:
-        click.echo(f"pi {__version__}")
+        click.echo(f"piY {__version__}")
         return
 
     if list_models_flag:

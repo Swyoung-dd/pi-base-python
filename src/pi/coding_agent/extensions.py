@@ -65,7 +65,7 @@ async def _load_file(path: Path, context: ExtensionContext) -> None:
     if not path.is_file():
         raise FileNotFoundError(f"Extension file not found: {path}")
     digest = hashlib.sha256(str(path.resolve()).encode()).hexdigest()[:16]
-    module_name = f"pi_local_extension_{digest}"
+    module_name = f"piy_local_extension_{digest}"
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load extension: {path}")
@@ -88,7 +88,7 @@ async def load_extensions(
     for path in paths:
         await _load_file(path.resolve(), context)
     if enable_entrypoints:
-        entrypoints = importlib.metadata.entry_points(group="pi.extensions")
+        entrypoints = importlib.metadata.entry_points(group="piy.extensions")
         for entrypoint in sorted(entrypoints, key=lambda item: item.name):
             loaded = entrypoint.load()
             setup = getattr(loaded, "setup", loaded)

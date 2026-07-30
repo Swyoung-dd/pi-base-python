@@ -106,7 +106,7 @@ class InteractiveSession:
             content.append(Text(self._current_thinking, style="dim"))
         if self._current_text:
             content.append(Markdown(self._current_text))
-        self._live.update(Panel(Group(*content), title="pi", border_style="blue"))
+        self._live.update(Panel(Group(*content), title="piY", border_style="blue"))
 
     async def _handle_command(self, prompt: str) -> tuple[bool, bool]:
         """处理斜杠命令，返回（是否已处理，是否退出）。"""
@@ -228,7 +228,7 @@ class InteractiveSession:
             self._current_text = ""
             self._current_thinking = ""
             self._live = Live(
-                Panel("", title="pi", border_style="blue"),
+                Panel("", title="piY", border_style="blue"),
                 console=self._console,
                 refresh_per_second=15,
             )
@@ -294,7 +294,7 @@ class InteractiveSession:
         await self._agent.restore()
 
         self._console.print(
-            Panel(Text(f"Pi v{__version__} - coding agent", justify="center"), style="blue")
+            Panel(Text(f"piY v{__version__} - coding agent", justify="center"), style="blue")
         )
         self._console.print(f"Model: [bold]{self._agent.state.model.id}[/bold]")
         self._console.print("Type your message and press Enter. Ctrl+C to exit.\n")

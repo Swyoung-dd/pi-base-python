@@ -130,7 +130,7 @@ def list_oauth_flows() -> list[str]:
 
 def get_default_oauth_store() -> OAuthCredentialStore:
     global _default_store
-    path = Path(os.environ.get("PI_AUTH_FILE", Path.home() / ".pi" / "auth.json"))
+    path = Path(os.environ.get("PIY_AUTH_FILE", Path.home() / ".piy" / "auth.json"))
     if _default_store is None or _default_store.path != path:
         _default_store = OAuthCredentialStore(path)
     return _default_store

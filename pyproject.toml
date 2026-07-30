@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pi-python"
+name = "piY"
 dynamic = ["version"]
-description = "Python implementation of the Pi agent harness"
+description = "piY AI coding agent for the terminal"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
-authors = [{ name = "Pi Contributors" }]
+authors = [{ name = "piY Contributors" }]
 keywords = ["ai", "llm", "agent", "coding-agent", "cli"]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -33,10 +33,10 @@ dev = [
 ]
 
 [project.scripts]
-pi = "pi.coding_agent.cli:main"
+piY = "pi.coding_agent.cli:main"
 
 [project.urls]
-Repository = "https://github.com/earendil-works/pi"
+Repository = "https://github.com/Swyoung-dd/pi-base-python"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pi"]

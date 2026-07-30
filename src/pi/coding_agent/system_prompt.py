@@ -13,7 +13,7 @@ def build_system_prompt(cwd: Path, tool_names: list[str]) -> str:
     """构建编码 agent 的系统提示词。"""
     tools_list = ", ".join(tool_names) if tool_names else "none"
 
-    return f"""You are Pi, an AI coding agent running in the user's terminal.
+    return f"""You are piY, an AI coding agent running in the user's terminal.
 
 You help the user with software engineering tasks: reading, writing, and editing code,
 running commands, and debugging issues.

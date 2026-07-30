@@ -1,6 +1,6 @@
 """编码 agent 的配置。
 
-从 .pi/ 目录、环境变量和默认值解析配置。
+从 .piy/ 目录、环境变量和默认值解析配置。
 """
 
 from __future__ import annotations
@@ -29,14 +29,14 @@ class Config:
     skill_paths: list[Path] = field(default_factory=list)
     enable_skills: bool = True
     is_configured: bool = False
-    config_dir: Path = field(default_factory=lambda: Path.cwd() / ".pi")
-    sessions_dir: Path = field(default_factory=lambda: Path.cwd() / ".pi" / "sessions")
+    config_dir: Path = field(default_factory=lambda: Path.cwd() / ".piy")
+    sessions_dir: Path = field(default_factory=lambda: Path.cwd() / ".piy" / "sessions")
 
 
 def load_config(config_dir: Path | None = None) -> Config:
-    """从 .pi/config.yaml 加载配置，回退到默认值。"""
+    """从 .piy/config.yaml 加载配置，回退到默认值。"""
     if config_dir is None:
-        config_dir = Path.cwd() / ".pi"
+        config_dir = Path.cwd() / ".piy"
 
     config = Config(config_dir=config_dir, sessions_dir=config_dir / "sessions")
 
@@ -77,11 +77,11 @@ def load_config(config_dir: Path | None = None) -> Config:
         load_model_file(models_file)
 
     # 环境变量覆盖
-    if env_model := os.environ.get("PI_MODEL"):
+    if env_model := os.environ.get("PIY_MODEL"):
         config.model = env_model
-    if env_provider := os.environ.get("PI_PROVIDER"):
+    if env_provider := os.environ.get("PIY_PROVIDER"):
         config.provider = env_provider
-    if env_thinking := os.environ.get("PI_THINKING"):
+    if env_thinking := os.environ.get("PIY_THINKING"):
         config.thinking_level = env_thinking
 
     config.sessions_dir.mkdir(parents=True, exist_ok=True)

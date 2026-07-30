@@ -40,3 +40,17 @@ def setup(context):
 
     with pytest.raises(ValueError, match="Duplicate extension command"):
         await load_extensions([extension])
+
+
+async def test_entrypoint_extensions_use_piy_group(monkeypatch):
+    captured = {}
+
+    def entry_points(*, group):
+        captured["group"] = group
+        return []
+
+    monkeypatch.setattr("pi.coding_agent.extensions.importlib.metadata.entry_points", entry_points)
+
+    await load_extensions([], enable_entrypoints=True)
+
+    assert captured["group"] == "piy.extensions"
