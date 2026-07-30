@@ -21,6 +21,7 @@ from pi.ai.streaming import (
     EventStream,
     StartEvent,
     TextDeltaEvent,
+    ThinkingDeltaEvent,
     ToolCallDeltaEvent,
     ToolCallEndEvent,
 )
@@ -31,6 +32,7 @@ from pi.ai.types import (
     StopReason,
     StreamOptions,
     TextContent,
+    ThinkingContent,
     ToolCall,
     ToolResultMessage,
     Usage,
@@ -157,6 +159,16 @@ class OpenAIProvider(BaseProvider):
                 payload["temperature"] = options.temperature
             if options.max_tokens is not None:
                 payload["max_tokens"] = options.max_tokens
+            if model.reasoning and options.thinking_level.value != "off":
+                effort_map = {
+                    "minimal": "low",
+                    "low": "low",
+                    "medium": "medium",
+                    "high": "high",
+                    "xhigh": "high",
+                    "max": "high",
+                }
+                payload["reasoning_effort"] = effort_map[options.thinking_level.value]
 
         max_retries = options.max_retries if options and options.max_retries is not None else 2
         timeout = options.timeout_ms / 1000 if options and options.timeout_ms else 600.0
@@ -202,6 +214,7 @@ async def _stream_openai(
 
     now = int(time.time() * 1000)
     text_parts: list[str] = []
+    thinking_parts: list[str] = []
     tool_buffers: dict[int, dict[str, str]] = {}
     usage = Usage()
     stop_reason = StopReason.STOP
@@ -241,6 +254,13 @@ async def _stream_openai(
                 delta = choices[0].get("delta", {})
                 finish = choices[0].get("finish_reason")
 
+                reasoning_delta = delta.get("reasoning_content") or delta.get("reasoning")
+                if reasoning_delta:
+                    thinking_parts.append(reasoning_delta)
+                    await stream_obj.push(
+                        ThinkingDeltaEvent(content_index=0, delta=reasoning_delta)
+                    )
+
                 if delta.get("content"):
                     text_parts.append(delta["content"])
                     await stream_obj.push(TextDeltaEvent(content_index=0, delta=delta["content"]))
@@ -271,13 +291,15 @@ async def _stream_openai(
     try:
         await run_with_retries(
             request_once,
-            lambda: bool(text_parts or tool_buffers),
+            lambda: bool(thinking_parts or text_parts or tool_buffers),
             stream_obj,
             max_retries,
         )
 
         # 构建最终内容块
         final_blocks: list[Any] = []
+        if thinking_parts:
+            final_blocks.append(ThinkingContent(thinking="".join(thinking_parts)))
         if text_parts:
             final_blocks.append(TextContent(text="".join(text_parts)))
         for idx in sorted(tool_buffers.keys()):

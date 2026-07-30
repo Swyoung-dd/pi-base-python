@@ -202,4 +202,6 @@ class StreamOptions(BaseModel):
     abort_event: asyncio.Event | None = None
     context_token_limit: int | None = None
     compact_to_tokens: int | None = None
+    thinking_level: ModelThinkingLevel = ModelThinkingLevel.OFF
+    thinking_budget_tokens: int | None = Field(default=None, ge=1024)
     model_config = {"arbitrary_types_allowed": True}

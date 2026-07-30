@@ -21,6 +21,7 @@ from pi.ai.streaming import (
     EventStream,
     StartEvent,
     TextDeltaEvent,
+    ThinkingDeltaEvent,
     ToolCallDeltaEvent,
     ToolCallEndEvent,
 )
@@ -31,6 +32,7 @@ from pi.ai.types import (
     StopReason,
     StreamOptions,
     TextContent,
+    ThinkingContent,
     ToolCall,
     ToolResultMessage,
     Usage,
@@ -146,8 +148,22 @@ class AnthropicProvider(BaseProvider):
         tools = self.convert_tools(context)
         if tools:
             payload["tools"] = tools
-        if options and options.temperature is not None:
+        if options and options.temperature is not None and options.thinking_level.value == "off":
             payload["temperature"] = options.temperature
+        if options and model.reasoning and options.thinking_level.value != "off":
+            budget_map = {
+                "minimal": 1024,
+                "low": 2048,
+                "medium": 4096,
+                "high": 8192,
+                "xhigh": 16384,
+                "max": 32768,
+            }
+            payload["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": options.thinking_budget_tokens
+                or budget_map[options.thinking_level.value],
+            }
 
         max_retries = options.max_retries if options and options.max_retries is not None else 2
         timeout = options.timeout_ms / 1000 if options and options.timeout_ms else 600.0
@@ -191,6 +207,7 @@ async def _stream_anthropic(
 ) -> None:
     now = int(time.time() * 1000)
     text_parts: list[str] = []
+    thinking_parts: list[str] = []
     tool_calls: list[dict[str, Any]] = []
     current_tool: dict[str, Any] | None = None
     usage = Usage()
@@ -229,7 +246,11 @@ async def _stream_anthropic(
                         }
                 elif event_type == "content_block_delta":
                     delta = data.get("delta", {})
-                    if delta.get("type") == "text_delta":
+                    if delta.get("type") == "thinking_delta":
+                        thinking = delta.get("thinking", "")
+                        thinking_parts.append(thinking)
+                        await stream_obj.push(ThinkingDeltaEvent(content_index=0, delta=thinking))
+                    elif delta.get("type") == "text_delta":
                         text_parts.append(delta["text"])
                         await stream_obj.push(TextDeltaEvent(content_index=0, delta=delta["text"]))
                     elif delta.get("type") == "input_json_delta" and current_tool is not None:
@@ -262,12 +283,14 @@ async def _stream_anthropic(
     try:
         await run_with_retries(
             request_once,
-            lambda: bool(text_parts or tool_calls or current_tool),
+            lambda: bool(thinking_parts or text_parts or tool_calls or current_tool),
             stream_obj,
             max_retries,
         )
 
         final_blocks: list[Any] = []
+        if thinking_parts:
+            final_blocks.append(ThinkingContent(thinking="".join(thinking_parts)))
         if text_parts:
             final_blocks.append(TextContent(text="".join(text_parts)))
         for i, tc in enumerate(tool_calls):

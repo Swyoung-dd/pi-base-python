@@ -33,8 +33,10 @@ from pi.ai.streaming import EventStream
 from pi.ai.types import (
     ImageContent,
     Model,
+    ModelThinkingLevel,
     StreamOptions,
     TextContent,
+    ThinkingContent,
 )
 
 StreamFn = Callable[
@@ -60,6 +62,8 @@ class AgentOptions:
     tool_execution: ToolExecutionMode = ToolExecutionMode.PARALLEL
     context_token_limit: int | None = None
     compact_to_tokens: int | None = None
+    thinking_level: ModelThinkingLevel = ModelThinkingLevel.OFF
+    thinking_budget_tokens: int | None = None
 
 
 class _PendingQueue:
@@ -100,6 +104,7 @@ class Agent:
             system_prompt=options.system_prompt,
             model=options.model,
             tools=options.tools[:],
+            thinking_level=options.thinking_level.value,
         )
         self._listeners: list[AgentListener] = []
         self._steering_queue = _PendingQueue(options.steering_mode)
@@ -117,6 +122,8 @@ class Agent:
             )
         self._context_token_limit = options.context_token_limit or model_context_limit
         self._compact_to_tokens = options.compact_to_tokens
+        self._thinking_level = options.thinking_level
+        self._thinking_budget_tokens = options.thinking_budget_tokens
         self._abort_event = asyncio.Event()
         self._idle_event = asyncio.Event()
         self._idle_event.set()
@@ -219,6 +226,8 @@ class Agent:
                     abort_event=self._abort_event,
                     context_token_limit=self._context_token_limit,
                     compact_to_tokens=self._compact_to_tokens,
+                    thinking_level=self._thinking_level,
+                    thinking_budget_tokens=self._thinking_budget_tokens,
                 ),
                 tool_execution=self._tool_execution,
             )
@@ -261,6 +270,20 @@ class Agent:
                         self._state.streaming_message.content.append(TextContent(text=event.delta))
                 else:
                     self._state.streaming_message.content.append(TextContent(text=event.delta))
+        elif event.type == "thinking_delta":
+            if self._state.streaming_message is not None:
+                if self._state.streaming_message.content:
+                    last = self._state.streaming_message.content[-1]
+                    if isinstance(last, ThinkingContent):
+                        last.thinking += event.delta
+                    else:
+                        self._state.streaming_message.content.append(
+                            ThinkingContent(thinking=event.delta)
+                        )
+                else:
+                    self._state.streaming_message.content.append(
+                        ThinkingContent(thinking=event.delta)
+                    )
         elif event.type == "message_end":
             self._state.streaming_message = None
             self._state.messages.append(event.message)

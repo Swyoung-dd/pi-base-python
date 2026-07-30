@@ -19,6 +19,7 @@ from pi.agent.session import JsonlStorage
 from pi.agent.types import AgentEvent, AgentTool
 from pi.ai.models import list_models
 from pi.ai.providers.registry import get_provider
+from pi.ai.types import ModelThinkingLevel
 from pi.coding_agent.config import load_config
 from pi.coding_agent.sessions import list_sessions, resolve_session_id, session_path
 from pi.coding_agent.system_prompt import build_system_prompt
@@ -102,6 +103,7 @@ async def run_print_mode(prompt: str, config) -> None:
             system_prompt=system_prompt,
             tools=tools,
             stream_fn=stream_fn,
+            thinking_level=ModelThinkingLevel(config.thinking_level),
         )
     )
     agent.subscribe(_print_event)
@@ -149,6 +151,7 @@ async def run_interactive_mode(
         session_id=session_id,
         session_storage=session_storage,
         sessions_dir=config.sessions_dir,
+        thinking_level=ModelThinkingLevel(config.thinking_level),
     )
     await session.run()
 
@@ -167,6 +170,12 @@ async def print_sessions(config) -> None:
 @click.option("-c", "--continue", "continue_session", is_flag=True, help="Resume latest session")
 @click.option("--list-sessions", is_flag=True, help="List saved sessions and exit")
 @click.option(
+    "--thinking",
+    type=click.Choice([level.value for level in ModelThinkingLevel]),
+    default=None,
+    help="Reasoning effort",
+)
+@click.option(
     "--list-models", "list_models_flag", is_flag=True, help="List available models and exit"
 )
 @click.option("--version", is_flag=True, help="Show version and exit")
@@ -176,6 +185,7 @@ def main(
     session_id,
     continue_session,
     list_sessions,
+    thinking,
     list_models_flag,
     version,
 ):
@@ -197,6 +207,8 @@ def main(
         return
     if model_id:
         config.model = model_id
+    if thinking:
+        config.thinking_level = thinking
 
     if prompt_text is not None:
         asyncio.run(run_print_mode(prompt_text, config))

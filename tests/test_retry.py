@@ -42,7 +42,8 @@ async def test_openai_retries_rate_limit_before_streaming(monkeypatch):
         _FakeResponse(
             200,
             lines=[
-                'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}',
+                'data: {"choices":[{"delta":{"reasoning_content":"think",'
+                '"content":"ok"},"finish_reason":"stop"}]}',
                 "data: [DONE]",
             ],
         ),
@@ -78,9 +79,16 @@ async def test_openai_retries_rate_limit_before_streaming(monkeypatch):
 
     errors = [event.error.error_message for event in events if event.type == "error"]
     assert not errors
-    assert [event.type for event in events] == ["start", "retry", "text_delta", "done"]
+    assert [event.type for event in events] == [
+        "start",
+        "retry",
+        "thinking_delta",
+        "text_delta",
+        "done",
+    ]
     assert events[1].attempt == 1
-    assert events[-1].message.content[0].text == "ok"
+    assert events[-1].message.content[0].thinking == "think"
+    assert events[-1].message.content[1].text == "ok"
     assert not responses
 
 

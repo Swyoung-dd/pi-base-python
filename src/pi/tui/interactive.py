@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -19,7 +19,7 @@ from pi.agent.agent import Agent, AgentOptions
 from pi.agent.session.base import SessionStorage
 from pi.agent.session.jsonl import JsonlStorage
 from pi.agent.types import AgentEvent, AgentTool
-from pi.ai.types import Model
+from pi.ai.types import Model, ModelThinkingLevel
 from pi.coding_agent.sessions import list_sessions, new_session_id, session_path
 
 
@@ -35,6 +35,7 @@ class InteractiveSession:
         session_id: str | None = None,
         session_storage: SessionStorage | None = None,
         sessions_dir: Path | None = None,
+        thinking_level: ModelThinkingLevel = ModelThinkingLevel.OFF,
     ) -> None:
         self._console = Console()
         self._agent = Agent(
@@ -45,12 +46,24 @@ class InteractiveSession:
                 stream_fn=stream_fn,
                 session_id=session_id,
                 session_storage=session_storage,
+                thinking_level=thinking_level,
             )
         )
         self._agent.subscribe(self._on_event)
         self._current_text = ""
+        self._current_thinking = ""
         self._live: Live | None = None
         self._sessions_dir = sessions_dir
+
+    def _update_live(self) -> None:
+        if self._live is None:
+            return
+        content = []
+        if self._current_thinking:
+            content.append(Text(self._current_thinking, style="dim"))
+        if self._current_text:
+            content.append(Markdown(self._current_text))
+        self._live.update(Panel(Group(*content), title="pi", border_style="blue"))
 
     async def _handle_command(self, prompt: str) -> tuple[bool, bool]:
         """处理斜杠命令，返回（是否已处理，是否退出）。"""
@@ -109,6 +122,7 @@ class InteractiveSession:
         """处理 agent 事件用于显示。"""
         if event.type == "message_start":
             self._current_text = ""
+            self._current_thinking = ""
             self._live = Live(
                 Panel("", title="pi", border_style="blue"),
                 console=self._console,
@@ -117,20 +131,22 @@ class InteractiveSession:
             self._live.start()
         elif event.type == "text_delta":
             self._current_text += event.delta
-            if self._live:
-                self._live.update(
-                    Panel(Markdown(self._current_text), title="pi", border_style="blue")
-                )
+            self._update_live()
+        elif event.type == "thinking_delta":
+            self._current_thinking += event.delta
+            self._update_live()
         elif event.type == "message_end":
             if self._live:
                 self._live.stop()
                 self._live = None
             self._current_text = ""
+            self._current_thinking = ""
         elif event.type == "tool_execution_start":
             if self._live:
                 self._live.stop()
                 self._live = None
             self._current_text = ""
+            self._current_thinking = ""
             self._console.print(f"  [dim]-> {event.tool_name}[/dim]")
         elif event.type == "tool_execution_end":
             if event.result and event.result.is_error:

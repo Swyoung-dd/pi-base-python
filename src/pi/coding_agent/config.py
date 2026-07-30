@@ -15,11 +15,13 @@ import yaml
 @dataclass
 class Config:
     """编码 agent 配置。"""
+
     model: str = "gpt-4o-mini"
     provider: str | None = None
     system_prompt: str = ""
     max_tokens: int | None = None
     temperature: float | None = None
+    thinking_level: str = "off"
     config_dir: Path = field(default_factory=lambda: Path.cwd() / ".pi")
     sessions_dir: Path = field(default_factory=lambda: Path.cwd() / ".pi" / "sessions")
 
@@ -45,12 +47,16 @@ def load_config(config_dir: Path | None = None) -> Config:
             config.max_tokens = data["max_tokens"]
         if "temperature" in data:
             config.temperature = data["temperature"]
+        if "thinking_level" in data:
+            config.thinking_level = data["thinking_level"]
 
     # 环境变量覆盖
     if env_model := os.environ.get("PI_MODEL"):
         config.model = env_model
     if env_provider := os.environ.get("PI_PROVIDER"):
         config.provider = env_provider
+    if env_thinking := os.environ.get("PI_THINKING"):
+        config.thinking_level = env_thinking
 
     config.sessions_dir.mkdir(parents=True, exist_ok=True)
     return config
