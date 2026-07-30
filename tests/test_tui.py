@@ -15,7 +15,10 @@ async def test_model_command_updates_toolbar(tmp_path, monkeypatch):
     replacement = models[1]
     store = CredentialStore(tmp_path / "auth.json")
     await save_api_key(replacement.provider, "existing-key", store)
-    monkeypatch.setattr("pi.tui.interactive.click.prompt", lambda *args, **kwargs: "new-key")
+    async def prompt_api_key(message):
+        return "new-key"
+
+    monkeypatch.setattr("pi.coding_agent.model_auth._prompt_api_key", prompt_api_key)
     selected_models = []
     session = InteractiveSession(
         model=initial,
@@ -45,14 +48,17 @@ async def test_model_command_selects_model_and_prompts_for_api_key(tmp_path, mon
     selected_index = models.index(selected_model) + 1
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("PIY_API_KEY_DEEPSEEK", raising=False)
-    responses = iter([selected_index, "deepseek-secret"])
-    prompt_calls = []
+    monkeypatch.setattr(
+        "pi.tui.interactive.click.prompt",
+        lambda *args, **kwargs: selected_index,
+    )
+    prompt_messages = []
 
-    def prompt(*args, **kwargs):
-        prompt_calls.append((args, kwargs))
-        return next(responses)
+    async def prompt_api_key(message):
+        prompt_messages.append(message)
+        return "deepseek-secret"
 
-    monkeypatch.setattr("pi.tui.interactive.click.prompt", prompt)
+    monkeypatch.setattr("pi.coding_agent.model_auth._prompt_api_key", prompt_api_key)
     store = CredentialStore(tmp_path / "auth.json")
     session = InteractiveSession(
         model=models[0],
@@ -68,7 +74,7 @@ async def test_model_command_selects_model_and_prompts_for_api_key(tmp_path, mon
     assert handled and not should_exit
     assert f"deepseek/{selected_model.id}" in session._bottom_toolbar()
     assert await resolve_stored_api_key("deepseek", store) == "deepseek-secret"
-    assert prompt_calls[1][1]["hide_input"] is True
+    assert prompt_messages == ["deepseek API key: "]
 
 
 def test_file_history_does_not_store_likely_api_keys(tmp_path):

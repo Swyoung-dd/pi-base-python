@@ -20,6 +20,7 @@ from pi.ai.providers import openai
 from pi.ai.providers.deepseek import DeepSeekProvider
 from pi.ai.streaming import DoneEvent
 from pi.ai.types import AssistantMessage, Context, Model, StopReason, TextContent
+from pi.coding_agent import model_auth
 
 
 class _FakeFlow:
@@ -161,3 +162,24 @@ async def test_deepseek_provider_uses_stored_api_key(tmp_path, monkeypatch):
 
     assert events[-1].type == "done"
     assert captured["Authorization"] == "Bearer stored-deepseek-key"
+
+
+async def test_api_key_prompt_uses_masked_input_without_history(monkeypatch):
+    captured = {}
+
+    class FakePromptSession:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def prompt_async(self, message):
+            captured["message"] = message
+            return "secret"
+
+    monkeypatch.setattr(model_auth, "PromptSession", FakePromptSession)
+
+    result = await model_auth._prompt_api_key("deepseek API key: ")
+
+    assert result == "secret"
+    assert captured["is_password"] is True
+    assert isinstance(captured["history"], model_auth.DummyHistory)
+    assert captured["message"] == "deepseek API key: "

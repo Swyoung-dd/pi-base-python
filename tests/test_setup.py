@@ -18,11 +18,15 @@ async def test_setup_selects_model_api_key_and_persists_both(tmp_path, monkeypat
     selected_index = models.index(selected) + 1
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("PIY_API_KEY_DEEPSEEK", raising=False)
-    responses = iter([selected_index, "setup-key"])
     monkeypatch.setattr(
         "pi.coding_agent.setup.click.prompt",
-        lambda *args, **kwargs: next(responses),
+        lambda *args, **kwargs: selected_index,
     )
+
+    async def prompt_api_key(message):
+        return "setup-key"
+
+    monkeypatch.setattr("pi.coding_agent.model_auth._prompt_api_key", prompt_api_key)
     store = CredentialStore(tmp_path / "auth.json")
     await run_setup(config, store)
 
