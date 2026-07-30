@@ -252,29 +252,48 @@ class Agent:
         self._state.messages.extend(messages)
 
         try:
-            new_messages = await run_agent_loop(
-                prompts=messages,
-                context=AgentContext(
-                    system_prompt=self._state.system_prompt,
-                    messages=previous_messages,
-                    tools=self._state.tools[:],
-                ),
-                model=self._state.model,
-                stream_fn=self._stream_fn,
-                sink=self._process_event,
-                options=StreamOptions(
-                    temperature=self._temperature,
-                    max_tokens=self._max_tokens,
-                    session_id=self._session_id,
-                    abort_event=self._abort_event,
-                    context_token_limit=self._context_token_limit,
-                    compact_to_tokens=self._compact_to_tokens,
-                    thinking_level=self._thinking_level,
-                    thinking_budget_tokens=self._thinking_budget_tokens,
-                ),
-                tool_execution=self._tool_execution,
-                tool_context=self._tool_context,
-            )
+            new_messages: list[AgentMessage] = []
+            pending_prompts = messages
+            while pending_prompts:
+                batch = await run_agent_loop(
+                    prompts=pending_prompts,
+                    context=AgentContext(
+                        system_prompt=self._state.system_prompt,
+                        messages=previous_messages + new_messages,
+                        tools=self._state.tools[:],
+                    ),
+                    model=self._state.model,
+                    stream_fn=self._stream_fn,
+                    sink=self._process_event,
+                    options=StreamOptions(
+                        temperature=self._temperature,
+                        max_tokens=self._max_tokens,
+                        session_id=self._session_id,
+                        abort_event=self._abort_event,
+                        context_token_limit=self._context_token_limit,
+                        compact_to_tokens=self._compact_to_tokens,
+                        thinking_level=self._thinking_level,
+                        thinking_budget_tokens=self._thinking_budget_tokens,
+                    ),
+                    tool_execution=self._tool_execution,
+                    tool_context=self._tool_context,
+                    get_steering_messages=self._steering_queue.drain,
+                )
+                new_messages.extend(batch)
+                last_assistant = next(
+                    (
+                        message
+                        for message in reversed(batch)
+                        if isinstance(message, AgentAssistantMessage)
+                    ),
+                    None,
+                )
+                if last_assistant and last_assistant.stop_reason in ("aborted", "error"):
+                    break
+                pending_prompts = self._steering_queue.drain()
+                if not pending_prompts:
+                    pending_prompts = self._follow_up_queue.drain()
+
             self._state.messages = previous_messages + new_messages
             if self._session_storage is not None:
                 for message in new_messages:

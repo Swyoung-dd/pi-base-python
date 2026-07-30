@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from typing import Any
 
 from pi.agent.compaction import compact_messages, estimate_messages_tokens
@@ -185,6 +186,7 @@ async def run_agent_loop(
     options: StreamOptions | None = None,
     tool_execution: ToolExecutionMode = ToolExecutionMode.PARALLEL,
     tool_context: Any = None,
+    get_steering_messages: Callable[[], list[AgentMessage]] | None = None,
 ) -> list[AgentMessage]:
     """Run the agent loop with a new prompt.
 
@@ -313,7 +315,12 @@ async def run_agent_loop(
 
         if not tool_calls:
             await sink(TurnEndEvent(message=agent_msg, tool_results=[]))
-            break
+            steering = get_steering_messages() if get_steering_messages else []
+            if not steering:
+                break
+            all_messages.extend(steering)
+            new_messages.extend(steering)
+            continue
 
         async def execute_and_emit(tool_call: ToolCall) -> AgentToolResult:
             await sink(
@@ -360,6 +367,9 @@ async def run_agent_loop(
             new_messages.append(tr_msg)
 
         await sink(TurnEndEvent(message=agent_msg, tool_results=tool_results))
+        steering = get_steering_messages() if get_steering_messages else []
+        all_messages.extend(steering)
+        new_messages.extend(steering)
 
     await sink(AgentEndEvent(messages=new_messages))
     return new_messages

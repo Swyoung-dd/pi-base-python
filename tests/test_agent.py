@@ -222,3 +222,108 @@ async def test_abort_cancels_provider_task_and_records_terminal_message():
     assert not agent.is_busy
     assert agent.state.messages[-1].stop_reason == "aborted"
     assert agent.state.messages[-1].error_message == "Request aborted"
+
+
+async def test_steering_message_is_delivered_after_current_tool_turn():
+    tool_started = asyncio.Event()
+    release_tool = asyncio.Event()
+    contexts = []
+
+    async def execute(call: AgentToolCall, ctx) -> AgentToolResult:
+        tool_started.set()
+        await release_tool.wait()
+        return AgentToolResult(
+            tool_call_id=call.id,
+            tool_name=call.name,
+            content=[TextContent(text="tool done")],
+        )
+
+    async def stream_fn(current_model, context, options):
+        contexts.append(context)
+        stream = EventStream()
+        content = (
+            [ToolCall(id="call-1", name="test_tool", arguments={})]
+            if len(contexts) == 1
+            else [TextContent(text="finished")]
+        )
+        response = AssistantMessage(
+            content=content,
+            api=current_model.api,
+            provider=current_model.provider,
+            model=current_model.id,
+            stop_reason=StopReason.TOOL_USE if len(contexts) == 1 else StopReason.STOP,
+            timestamp=len(contexts),
+        )
+        await stream.push(DoneEvent(message=response))
+        await stream.end(response)
+        return stream
+
+    agent = Agent(
+        AgentOptions(
+            model=Model(id="test", name="Test", api="test", provider="test"),
+            stream_fn=stream_fn,
+            tools=[
+                AgentTool(
+                    name="test_tool",
+                    description="test",
+                    parameters={"type": "object", "properties": {}},
+                    execute=execute,
+                )
+            ],
+        )
+    )
+    task = asyncio.create_task(agent.prompt("initial"))
+    await tool_started.wait()
+    agent.steer(create_user_message("correction"))
+    release_tool.set()
+    await task
+
+    assert [message.role for message in contexts[1].messages] == [
+        "user",
+        "assistant",
+        "toolResult",
+        "user",
+    ]
+    assert contexts[1].messages[-1].content == "correction"
+
+
+async def test_follow_up_message_starts_after_agent_finishes():
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    contexts = []
+
+    async def stream_fn(current_model, context, options):
+        contexts.append(context)
+        if len(contexts) == 1:
+            first_started.set()
+            await release_first.wait()
+        stream = EventStream()
+        response = AssistantMessage(
+            content=[TextContent(text=f"reply-{len(contexts)}")],
+            api=current_model.api,
+            provider=current_model.provider,
+            model=current_model.id,
+            stop_reason=StopReason.STOP,
+            timestamp=len(contexts),
+        )
+        await stream.push(DoneEvent(message=response))
+        await stream.end(response)
+        return stream
+
+    agent = Agent(
+        AgentOptions(
+            model=Model(id="test", name="Test", api="test", provider="test"),
+            stream_fn=stream_fn,
+        )
+    )
+    task = asyncio.create_task(agent.prompt("initial"))
+    await first_started.wait()
+    agent.follow_up(create_user_message("next"))
+    release_first.set()
+    await task
+
+    assert len(contexts) == 2
+    assert [message.content for message in contexts[1].messages if message.role == "user"] == [
+        "initial",
+        "next",
+    ]

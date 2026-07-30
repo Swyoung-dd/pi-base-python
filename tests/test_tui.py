@@ -68,6 +68,24 @@ def test_toolbar_shows_context_usage_and_percentage(tmp_path):
     assert f"({10_000 / model.context_window * 100:.1f}%)" in toolbar
 
 
+def test_busy_session_queues_prompt_as_steering(tmp_path, monkeypatch):
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        history_file=tmp_path / "history",
+    )
+    queued = []
+    session._agent._idle_event.clear()
+    monkeypatch.setattr(session._agent, "steer", queued.append)
+
+    session._submit_agent_prompt("correction")
+
+    assert len(queued) == 1
+    assert queued[0].content == "correction"
+
+
 async def test_model_command_selects_model_and_prompts_for_api_key(tmp_path, monkeypatch):
     models = list_models()
     selected_model = next(model for model in models if model.provider == "deepseek")

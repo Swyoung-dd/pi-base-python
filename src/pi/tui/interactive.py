@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import signal
 import sys
@@ -20,6 +21,7 @@ from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.history import FileHistory, InMemoryHistory
 from prompt_toolkit.input import DummyInput
 from prompt_toolkit.output import DummyOutput
+from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
@@ -30,7 +32,7 @@ from pi.agent.agent import Agent, AgentOptions
 from pi.agent.session.base import SessionStorage
 from pi.agent.session.jsonl import JsonlStorage
 from pi.agent.tools import ToolContext
-from pi.agent.types import AgentEvent, AgentTool
+from pi.agent.types import AgentEvent, AgentTool, create_user_message
 from pi.ai.models import list_models
 from pi.ai.oauth import CredentialStore, get_default_credential_store
 from pi.ai.types import Model, ModelThinkingLevel
@@ -112,6 +114,7 @@ class InteractiveSession:
         self._current_text = ""
         self._current_thinking = ""
         self._live: Live | None = None
+        self._agent_task: asyncio.Task[None] | None = None
         self._sessions_dir = sessions_dir
         self._session_id = session_id
         self._commands = commands or {}
@@ -127,6 +130,8 @@ class InteractiveSession:
             "/resume",
             "/sessions",
             "/skill",
+            "/steer",
+            "/follow-up",
             *[f"/{name}" for name in self._commands],
             *[f"/skill:{name}" for name in self._skills],
         ]
@@ -164,7 +169,8 @@ class InteractiveSession:
         if command == "/help":
             self._console.print(
                 "/new  /resume <id>  /sessions  /model [provider/id]  "
-                "/skill <name> [task]  /clear  /help  /exit",
+                "/skill <name> [task]  /steer <message>  /follow-up <message>  "
+                "/clear  /help  /exit",
                 style="dim",
             )
             return True, False
@@ -232,7 +238,16 @@ class InteractiveSession:
                 f"Apply the following skill instructions.\n\n{skill.read()}"
                 f"\n\nTask:\n{skill_argument or 'Follow the skill instructions.'}"
             )
-            await self._agent.prompt(prompt)
+            self._submit_agent_prompt(prompt)
+            return True, False
+        if command in ("/steer", "/follow-up"):
+            if not argument:
+                self._console.print(f"Usage: {command} <message>", style="yellow")
+                return True, False
+            self._submit_agent_prompt(
+                expand_file_references(argument, self._cwd),
+                follow_up=command == "/follow-up",
+            )
             return True, False
         if command == "/sessions":
             if self._sessions_dir is None:
@@ -279,6 +294,19 @@ class InteractiveSession:
             self._console.print(f"Unknown command: {command}", style="yellow")
             return True, False
         return False, False
+
+    def _submit_agent_prompt(self, prompt: str, follow_up: bool = False) -> None:
+        """启动新请求，或把消息加入正在运行的 agent 队列。"""
+        if self._agent.is_busy:
+            message = create_user_message(prompt)
+            if follow_up:
+                self._agent.follow_up(message)
+                self._console.print("[dim]Queued follow-up.[/dim]")
+            else:
+                self._agent.steer(message)
+                self._console.print("[dim]Queued steering message.[/dim]")
+            return
+        self._agent_task = asyncio.create_task(self._agent.prompt(prompt))
 
     async def _on_event(self, event: AgentEvent) -> None:
         """处理 agent 事件用于显示。"""
@@ -377,10 +405,11 @@ class InteractiveSession:
         try:
             while True:
                 try:
-                    prompt = await self._prompt_session.prompt_async(
-                        ">>> ",
-                        bottom_toolbar=self._bottom_toolbar,
-                    )
+                    with patch_stdout(raw=True):
+                        prompt = await self._prompt_session.prompt_async(
+                            ">>> ",
+                            bottom_toolbar=self._bottom_toolbar,
+                        )
                     if not prompt.strip():
                         continue
                     if contains_likely_api_key(prompt):
@@ -395,12 +424,14 @@ class InteractiveSession:
                     if handled:
                         continue
 
-                    await self._agent.prompt(expand_file_references(prompt, self._cwd))
-                    self._console.print()
+                    self._submit_agent_prompt(expand_file_references(prompt, self._cwd))
                 except (KeyboardInterrupt, EOFError):
                     self._console.print("\n[dim]Goodbye.[/dim]")
                     break
                 except Exception as exc:
                     self._console.print(f"[red]Error: {exc}[/red]")
         finally:
+            if self._agent.is_busy:
+                self._agent.abort()
+                await self._agent.wait_for_idle()
             signal.signal(signal.SIGINT, previous_sigint)
