@@ -99,11 +99,22 @@ def save_config(config: Config) -> Path:
     config.config_dir.mkdir(parents=True, exist_ok=True)
     path = config.config_dir / "config.yaml"
     temporary = path.with_suffix(".yaml.tmp")
-    data = {
-        "model": config.model,
-        "provider": config.provider,
-        "thinking_level": config.thinking_level,
-    }
+    data = {}
+    if path.is_file():
+        existing = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if isinstance(existing, dict):
+            data.update(existing)
+    data.update(
+        {
+            "model": config.model,
+            "provider": config.provider,
+            "thinking_level": config.thinking_level,
+        }
+    )
+    if config.max_tokens is not None:
+        data["max_tokens"] = config.max_tokens
+    if config.temperature is not None:
+        data["temperature"] = config.temperature
     temporary.write_text(
         yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
         encoding="utf-8",

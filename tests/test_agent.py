@@ -92,6 +92,48 @@ async def test_prompt_only_appears_once_in_provider_context():
     assert event_types.count("message_start") == 1
 
 
+async def test_agent_passes_generation_options_to_provider():
+    seen_options = []
+    model = Model(
+        id="test",
+        name="Test",
+        api="test",
+        provider="test",
+        context_window=10_000,
+        max_tokens=2_000,
+    )
+
+    async def stream_fn(current_model, context, options):
+        seen_options.append(options)
+        stream = EventStream()
+        response = AssistantMessage(
+            content=[TextContent(text="ok")],
+            api=current_model.api,
+            provider=current_model.provider,
+            model=current_model.id,
+            stop_reason=StopReason.STOP,
+            timestamp=1,
+        )
+        await stream.push(DoneEvent(message=response))
+        await stream.end(response)
+        return stream
+
+    agent = Agent(
+        AgentOptions(
+            model=model,
+            stream_fn=stream_fn,
+            temperature=0.25,
+            max_tokens=512,
+        )
+    )
+
+    await agent.prompt("hello")
+
+    assert seen_options[0].temperature == 0.25
+    assert seen_options[0].max_tokens == 512
+    assert agent.context_token_limit == 9_488
+
+
 @pytest.mark.asyncio
 async def test_abort_cancels_provider_task_and_records_terminal_message():
     started = asyncio.Event()

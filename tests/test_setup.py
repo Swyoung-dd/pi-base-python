@@ -4,7 +4,7 @@ from pi.agent.agent import Agent, AgentOptions
 from pi.ai.models import list_models
 from pi.ai.oauth import CredentialStore, resolve_stored_api_key
 from pi.ai.types import Model
-from pi.coding_agent.config import Config, load_config
+from pi.coding_agent.config import Config, load_config, save_config
 from pi.coding_agent.setup import run_setup
 
 
@@ -75,3 +75,33 @@ def test_agent_model_switch_updates_context_limit():
 
     assert agent.state.model is replacement
     assert agent.context_token_limit == 18_000
+
+
+def test_save_config_preserves_resource_settings(tmp_path):
+    config_dir = tmp_path / ".piy"
+    config_dir.mkdir()
+    path = config_dir / "config.yaml"
+    path.write_text(
+        """extensions:
+  - extension.py
+enable_skills: false
+""",
+        encoding="utf-8",
+    )
+    config = Config(
+        model="new-model",
+        provider="new-provider",
+        thinking_level="high",
+        max_tokens=2048,
+        temperature=0.3,
+        config_dir=config_dir,
+        sessions_dir=config_dir / "sessions",
+    )
+
+    save_config(config)
+    restored = load_config(config_dir)
+
+    assert restored.extension_paths == [(config_dir / "extension.py").resolve()]
+    assert not restored.enable_skills
+    assert restored.max_tokens == 2048
+    assert restored.temperature == 0.3

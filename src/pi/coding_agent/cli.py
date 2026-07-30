@@ -132,6 +132,8 @@ async def run_print_mode(prompt: str, config, output_format: str = "text") -> No
             system_prompt=system_prompt,
             tools=tools,
             stream_fn=stream_fn,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
             thinking_level=ModelThinkingLevel(config.thinking_level),
         )
     )
@@ -175,6 +177,8 @@ async def run_interactive_mode(
         session_storage=session_storage,
         sessions_dir=config.sessions_dir,
         thinking_level=ModelThinkingLevel(config.thinking_level),
+        temperature=config.temperature,
+        max_tokens=config.max_tokens,
         commands=commands,
         skills=skills,
         cwd=cwd,

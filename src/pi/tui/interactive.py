@@ -82,6 +82,8 @@ class InteractiveSession:
         session_storage: SessionStorage | None = None,
         sessions_dir: Path | None = None,
         thinking_level: ModelThinkingLevel = ModelThinkingLevel.OFF,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
         commands: dict[str, ExtensionCommand] | None = None,
         skills: list[Skill] | None = None,
         cwd: Path | None = None,
@@ -98,6 +100,8 @@ class InteractiveSession:
                 stream_fn=stream_fn,
                 session_id=session_id,
                 session_storage=session_storage,
+                temperature=temperature,
+                max_tokens=max_tokens,
                 thinking_level=thinking_level,
             )
         )

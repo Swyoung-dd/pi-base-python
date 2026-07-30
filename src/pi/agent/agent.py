@@ -63,6 +63,8 @@ class AgentOptions:
     tool_execution: ToolExecutionMode = ToolExecutionMode.PARALLEL
     context_token_limit: int | None = None
     compact_to_tokens: int | None = None
+    temperature: float | None = None
+    max_tokens: int | None = None
     thinking_level: ModelThinkingLevel = ModelThinkingLevel.OFF
     thinking_budget_tokens: int | None = None
 
@@ -126,12 +128,12 @@ class Agent:
         self._tool_execution = options.tool_execution
         model_context_limit = None
         if options.model is not None and options.model.context_window:
-            model_context_limit = max(
-                1,
-                options.model.context_window - (options.model.max_tokens or 4096),
-            )
+            reserved_tokens = options.max_tokens or options.model.max_tokens or 4096
+            model_context_limit = max(1, options.model.context_window - reserved_tokens)
         self._context_token_limit = options.context_token_limit or model_context_limit
         self._compact_to_tokens = options.compact_to_tokens
+        self._temperature = options.temperature
+        self._max_tokens = options.max_tokens
         self._thinking_level = options.thinking_level
         self._thinking_budget_tokens = options.thinking_budget_tokens
         self._abort_event = asyncio.Event()
@@ -215,7 +217,7 @@ class Agent:
             raise RuntimeError("Agent is already processing")
         self._state.model = model
         self._context_token_limit = (
-            max(1, model.context_window - (model.max_tokens or 4096))
+            max(1, model.context_window - (self._max_tokens or model.max_tokens or 4096))
             if model.context_window
             else None
         )
@@ -259,6 +261,8 @@ class Agent:
                 stream_fn=self._stream_fn,
                 sink=self._process_event,
                 options=StreamOptions(
+                    temperature=self._temperature,
+                    max_tokens=self._max_tokens,
                     session_id=self._session_id,
                     abort_event=self._abort_event,
                     context_token_limit=self._context_token_limit,
