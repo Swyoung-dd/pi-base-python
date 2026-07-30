@@ -2,19 +2,20 @@
 
 from pi.ai.models import list_models
 from pi.ai.oauth import CredentialStore, resolve_stored_api_key, save_api_key
-from pi.tui.interactive import InteractiveSession
+from pi.tui.interactive import InteractiveSession, _SafeFileHistory
 
 
 async def _unused_stream(model, context, options):
     raise AssertionError("stream should not be called")
 
 
-async def test_model_command_updates_toolbar(tmp_path):
+async def test_model_command_updates_toolbar(tmp_path, monkeypatch):
     models = list_models()
     initial = models[0]
     replacement = models[1]
     store = CredentialStore(tmp_path / "auth.json")
     await save_api_key(replacement.provider, "existing-key", store)
+    monkeypatch.setattr("pi.tui.interactive.click.prompt", lambda *args, **kwargs: "new-key")
     selected_models = []
     session = InteractiveSession(
         model=initial,
@@ -35,6 +36,7 @@ async def test_model_command_updates_toolbar(tmp_path):
     assert f"{replacement.provider}/{replacement.id}" in session._bottom_toolbar()
     assert "test-session" in session._bottom_toolbar()
     assert selected_models == [replacement]
+    assert await resolve_stored_api_key(replacement.provider, store) == "new-key"
 
 
 async def test_model_command_selects_model_and_prompts_for_api_key(tmp_path, monkeypatch):
@@ -67,3 +69,15 @@ async def test_model_command_selects_model_and_prompts_for_api_key(tmp_path, mon
     assert f"deepseek/{selected_model.id}" in session._bottom_toolbar()
     assert await resolve_stored_api_key("deepseek", store) == "deepseek-secret"
     assert prompt_calls[1][1]["hide_input"] is True
+
+
+def test_file_history_does_not_store_likely_api_keys(tmp_path):
+    path = tmp_path / "history"
+    history = _SafeFileHistory(str(path))
+
+    history.store_string("normal prompt")
+    history.store_string("sk-" + "a" * 32)
+
+    content = path.read_text(encoding="utf-8")
+    assert "normal prompt" in content
+    assert "sk-" not in content

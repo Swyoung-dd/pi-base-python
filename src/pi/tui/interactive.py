@@ -35,9 +35,25 @@ from pi.ai.oauth import CredentialStore, get_default_credential_store
 from pi.ai.types import Model, ModelThinkingLevel
 from pi.coding_agent.extensions import ExtensionCommand
 from pi.coding_agent.file_references import expand_file_references
-from pi.coding_agent.model_auth import ensure_model_auth
+from pi.coding_agent.model_auth import contains_likely_api_key, ensure_model_auth
 from pi.coding_agent.sessions import list_sessions, new_session_id, session_path
 from pi.coding_agent.skills import Skill
+
+
+class _SafeFileHistory(FileHistory):
+    """过滤疑似 API Key，避免凭据落入磁盘输入历史。"""
+
+    def store_string(self, string: str) -> None:
+        if not contains_likely_api_key(string):
+            super().store_string(string)
+
+
+class _SafeInMemoryHistory(InMemoryHistory):
+    """过滤疑似 API Key，避免凭据保留在当前进程输入历史。"""
+
+    def store_string(self, string: str) -> None:
+        if not contains_likely_api_key(string):
+            super().store_string(string)
 
 
 class InteractiveSession:
@@ -95,7 +111,7 @@ class InteractiveSession:
             *[f"/{name}" for name in self._commands],
             *[f"/skill:{name}" for name in self._skills],
         ]
-        history = FileHistory(str(history_file)) if history_file else InMemoryHistory()
+        history = _SafeFileHistory(str(history_file)) if history_file else _SafeInMemoryHistory()
         interactive_terminal = sys.stdin.isatty() and sys.stdout.isatty()
         self._prompt_session: PromptSession[str] = PromptSession(
             history=history,
@@ -340,6 +356,12 @@ class InteractiveSession:
                         bottom_toolbar=self._bottom_toolbar,
                     )
                     if not prompt.strip():
+                        continue
+                    if contains_likely_api_key(prompt):
+                        self._console.print(
+                            "[red]Input looks like an API key and was not sent. "
+                            "Use /model to configure credentials.[/red]"
+                        )
                         continue
                     handled, should_exit = await self._handle_command(prompt)
                     if should_exit:
