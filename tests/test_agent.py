@@ -1,10 +1,12 @@
 """Agent 运行时测试。"""
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
 from pi.agent.agent import Agent, AgentOptions
+from pi.agent.tools import ToolContext
 from pi.agent.types import (
     AgentTool,
     AgentToolCall,
@@ -12,7 +14,7 @@ from pi.agent.types import (
     create_user_message,
 )
 from pi.ai.streaming import DoneEvent, EventStream
-from pi.ai.types import AssistantMessage, Model, StopReason, TextContent
+from pi.ai.types import AssistantMessage, Model, StopReason, TextContent, ToolCall
 
 
 @pytest.mark.asyncio
@@ -55,6 +57,63 @@ async def test_tool_execution():
     assert result.tool_name == "test_tool"
     assert result.content[0].text == "Result for test_tool"
     assert not result.is_error
+
+
+async def test_agent_passes_tool_context_to_tool(tmp_path):
+    seen_contexts = []
+
+    async def execute(call: AgentToolCall, ctx) -> AgentToolResult:
+        seen_contexts.append(ctx)
+        return AgentToolResult(
+            tool_call_id=call.id,
+            tool_name=call.name,
+            content=[TextContent(text="done")],
+        )
+
+    call_count = 0
+
+    async def stream_fn(current_model, context, options):
+        nonlocal call_count
+        call_count += 1
+        stream = EventStream()
+        content = (
+            [ToolCall(id="call-1", name="test_tool", arguments={})]
+            if call_count == 1
+            else [TextContent(text="finished")]
+        )
+        response = AssistantMessage(
+            content=content,
+            api=current_model.api,
+            provider=current_model.provider,
+            model=current_model.id,
+            stop_reason=StopReason.TOOL_USE if call_count == 1 else StopReason.STOP,
+            timestamp=call_count,
+        )
+        await stream.push(DoneEvent(message=response))
+        await stream.end(response)
+        return stream
+
+    context = ToolContext(cwd=Path(tmp_path), state={"session": "test"})
+    agent = Agent(
+        AgentOptions(
+            model=Model(id="test", name="Test", api="test", provider="test"),
+            stream_fn=stream_fn,
+            tools=[
+                AgentTool(
+                    name="test_tool",
+                    description="test",
+                    parameters={"type": "object", "properties": {}},
+                    execute=execute,
+                )
+            ],
+            tool_context=context,
+        )
+    )
+
+    await agent.prompt("run")
+
+    assert seen_contexts == [context]
+    assert seen_contexts[0].cwd == tmp_path
 
 
 @pytest.mark.asyncio

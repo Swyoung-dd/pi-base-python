@@ -29,6 +29,7 @@ from rich.text import Text
 from pi.agent.agent import Agent, AgentOptions
 from pi.agent.session.base import SessionStorage
 from pi.agent.session.jsonl import JsonlStorage
+from pi.agent.tools import ToolContext
 from pi.agent.types import AgentEvent, AgentTool
 from pi.ai.models import list_models
 from pi.ai.oauth import CredentialStore, get_default_credential_store
@@ -91,6 +92,7 @@ class InteractiveSession:
         credential_store: CredentialStore | None = None,
         on_model_selected: Callable[[Model], None] | None = None,
     ) -> None:
+        self._cwd = (cwd or Path.cwd()).resolve()
         self._console = Console()
         self._agent = Agent(
             AgentOptions(
@@ -98,6 +100,7 @@ class InteractiveSession:
                 system_prompt=system_prompt,
                 tools=tools,
                 stream_fn=stream_fn,
+                tool_context=ToolContext(cwd=self._cwd),
                 session_id=session_id,
                 session_storage=session_storage,
                 temperature=temperature,
@@ -113,7 +116,6 @@ class InteractiveSession:
         self._session_id = session_id
         self._commands = commands or {}
         self._skills = {skill.name: skill for skill in skills or []}
-        self._cwd = (cwd or Path.cwd()).resolve()
         self._credential_store = credential_store or get_default_credential_store()
         self._on_model_selected = on_model_selected
         command_names = [

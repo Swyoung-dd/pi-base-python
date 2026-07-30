@@ -61,6 +61,7 @@ class AgentOptions:
     steering_mode: QueueMode = QueueMode.ONE_AT_A_TIME
     follow_up_mode: QueueMode = QueueMode.ONE_AT_A_TIME
     tool_execution: ToolExecutionMode = ToolExecutionMode.PARALLEL
+    tool_context: Any = None
     context_token_limit: int | None = None
     compact_to_tokens: int | None = None
     temperature: float | None = None
@@ -126,6 +127,7 @@ class Agent:
         self._session_storage = options.session_storage
         self._session_loaded = False
         self._tool_execution = options.tool_execution
+        self._tool_context = options.tool_context
         model_context_limit = None
         if options.model is not None and options.model.context_window:
             reserved_tokens = options.max_tokens or options.model.max_tokens or 4096
@@ -271,6 +273,7 @@ class Agent:
                     thinking_budget_tokens=self._thinking_budget_tokens,
                 ),
                 tool_execution=self._tool_execution,
+                tool_context=self._tool_context,
             )
             self._state.messages = previous_messages + new_messages
             if self._session_storage is not None:

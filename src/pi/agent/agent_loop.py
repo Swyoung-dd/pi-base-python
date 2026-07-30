@@ -93,6 +93,7 @@ async def _execute_tool_call(
     tool_call: ToolCall,
     tool: AgentTool | None,
     abort_event: asyncio.Event | None,
+    tool_context: Any = None,
 ) -> AgentToolResult:
     """执行单个工具，并允许取消长时间运行的任务。"""
     if tool is None:
@@ -108,7 +109,7 @@ async def _execute_tool_call(
         name=tool_call.name,
         arguments=tool_call.arguments,
     )
-    execution_task = asyncio.create_task(tool.execute(call, None))
+    execution_task = asyncio.create_task(tool.execute(call, tool_context))
     try:
         if abort_event is None:
             return await execution_task
@@ -183,6 +184,7 @@ async def run_agent_loop(
     sink: AgentEventSink,
     options: StreamOptions | None = None,
     tool_execution: ToolExecutionMode = ToolExecutionMode.PARALLEL,
+    tool_context: Any = None,
 ) -> list[AgentMessage]:
     """Run the agent loop with a new prompt.
 
@@ -325,6 +327,7 @@ async def run_agent_loop(
                 tool_call,
                 tools_map.get(tool_call.name),
                 abort_event,
+                tool_context,
             )
             await sink(
                 ToolExecutionEndEvent(

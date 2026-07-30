@@ -15,6 +15,7 @@ import click
 
 from pi.agent.agent import Agent, AgentOptions
 from pi.agent.session import JsonlStorage
+from pi.agent.tools import ToolContext
 from pi.agent.types import AgentTool
 from pi.ai.models import get_model, list_models
 from pi.ai.oauth import OAuthEvent, get_default_credential_store, login_oauth
@@ -132,6 +133,7 @@ async def run_print_mode(prompt: str, config, output_format: str = "text") -> No
             system_prompt=system_prompt,
             tools=tools,
             stream_fn=stream_fn,
+            tool_context=ToolContext(cwd=cwd),
             temperature=config.temperature,
             max_tokens=config.max_tokens,
             thinking_level=ModelThinkingLevel(config.thinking_level),
