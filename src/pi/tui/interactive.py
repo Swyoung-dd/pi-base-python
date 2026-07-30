@@ -9,9 +9,11 @@ from __future__ import annotations
 import inspect
 import signal
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import click
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.completion import WordCompleter
@@ -29,9 +31,11 @@ from pi.agent.session.base import SessionStorage
 from pi.agent.session.jsonl import JsonlStorage
 from pi.agent.types import AgentEvent, AgentTool
 from pi.ai.models import list_models
+from pi.ai.oauth import CredentialStore, get_default_credential_store
 from pi.ai.types import Model, ModelThinkingLevel
 from pi.coding_agent.extensions import ExtensionCommand
 from pi.coding_agent.file_references import expand_file_references
+from pi.coding_agent.model_auth import ensure_model_auth
 from pi.coding_agent.sessions import list_sessions, new_session_id, session_path
 from pi.coding_agent.skills import Skill
 
@@ -53,6 +57,8 @@ class InteractiveSession:
         skills: list[Skill] | None = None,
         cwd: Path | None = None,
         history_file: Path | None = None,
+        credential_store: CredentialStore | None = None,
+        on_model_selected: Callable[[Model], None] | None = None,
     ) -> None:
         self._console = Console()
         self._agent = Agent(
@@ -75,6 +81,8 @@ class InteractiveSession:
         self._commands = commands or {}
         self._skills = {skill.name: skill for skill in skills or []}
         self._cwd = (cwd or Path.cwd()).resolve()
+        self._credential_store = credential_store or get_default_credential_store()
+        self._on_model_selected = on_model_selected
         command_names = [
             "/clear",
             "/exit",
@@ -126,32 +134,48 @@ class InteractiveSession:
             )
             return True, False
         if command == "/model":
-            if not argument:
+            models = list_models()
+            selected: Model | None = None
+            if argument:
+                matches = [
+                    model
+                    for model in models
+                    if argument in (model.id, f"{model.provider}/{model.id}")
+                ]
+                if len(matches) != 1:
+                    self._console.print(f"Unknown or ambiguous model: {argument}", style="red")
+                    return True, False
+                selected = matches[0]
+            else:
                 current = self._agent.state.model
-                for model in list_models():
+                for index, model in enumerate(models, start=1):
                     marker = (
                         "*"
                         if current
-                        and (
-                            model.provider,
-                            model.id,
-                        )
-                        == (current.provider, current.id)
+                        and (model.provider, model.id) == (current.provider, current.id)
                         else " "
                     )
-                    self._console.print(f"{marker} {model.provider}/{model.id}", style="dim")
+                    self._console.print(
+                        f"{index:>2}. {marker} {model.provider}/{model.id}",
+                        style="dim",
+                    )
+                try:
+                    selected_index = click.prompt(
+                        "Select model",
+                        type=click.IntRange(1, len(models)),
+                    )
+                except (click.Abort, EOFError):
+                    self._console.print("Model selection cancelled.", style="dim")
+                    return True, False
+                selected = models[selected_index - 1]
+
+            if not await ensure_model_auth(selected, self._credential_store):
                 return True, False
-            matches = [
-                model
-                for model in list_models()
-                if argument in (model.id, f"{model.provider}/{model.id}")
-            ]
-            if len(matches) != 1:
-                self._console.print(f"Unknown or ambiguous model: {argument}", style="red")
-                return True, False
-            self._agent.set_model(matches[0])
+            self._agent.set_model(selected)
+            if self._on_model_selected is not None:
+                self._on_model_selected(selected)
             self._console.print(
-                f"Model: {matches[0].provider}/{matches[0].id}",
+                f"Model: {selected.provider}/{selected.id}",
                 style="dim",
             )
             return True, False

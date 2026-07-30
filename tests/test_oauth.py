@@ -5,15 +5,19 @@ import time
 
 import pytest
 
-from pi.ai.auth import get_api_key
+from pi.ai.auth import get_api_key, get_provider_token
 from pi.ai.oauth import (
+    ApiKeyCredential,
+    CredentialStore,
     OAuthCredential,
-    OAuthCredentialStore,
     register_oauth_flow,
     resolve_oauth_access_token,
+    resolve_stored_api_key,
+    save_api_key,
 )
 from pi.ai.oauth_xai import _validate_verification_uri
 from pi.ai.providers import openai
+from pi.ai.providers.deepseek import DeepSeekProvider
 from pi.ai.streaming import DoneEvent
 from pi.ai.types import AssistantMessage, Context, Model, StopReason, TextContent
 
@@ -44,7 +48,7 @@ def test_generic_api_key_uses_piy_prefix(monkeypatch):
 
 
 async def test_concurrent_oauth_resolution_refreshes_once(tmp_path):
-    store = OAuthCredentialStore(tmp_path / "auth.json")
+    store = CredentialStore(tmp_path / "auth.json")
     expired = OAuthCredential(access="old", refresh="refresh", expires=1)
     await store.modify("test-oauth", lambda current: expired)
     flow = _FakeFlow()
@@ -63,7 +67,7 @@ async def test_concurrent_oauth_resolution_refreshes_once(tmp_path):
 async def test_provider_uses_stored_oauth_bearer_token(tmp_path, monkeypatch):
     auth_file = tmp_path / "auth.json"
     monkeypatch.setenv("PIY_AUTH_FILE", str(auth_file))
-    store = OAuthCredentialStore(auth_file)
+    store = CredentialStore(auth_file)
     await store.modify(
         "xai",
         lambda current: OAuthCredential(
@@ -107,3 +111,53 @@ async def test_provider_uses_stored_oauth_bearer_token(tmp_path, monkeypatch):
 def test_xai_device_flow_rejects_untrusted_verification_uri():
     with pytest.raises(ValueError):
         _validate_verification_uri("http://example.test/verify")
+
+
+async def test_api_key_is_persisted_and_resolved(tmp_path):
+    auth_file = tmp_path / "auth.json"
+    store = CredentialStore(auth_file)
+
+    await save_api_key("deepseek", "  secret-key  ", store)
+
+    assert await store.read("deepseek") == ApiKeyCredential(key="secret-key")
+    assert await resolve_stored_api_key("deepseek", store) == "secret-key"
+    assert '"type": "api_key"' in auth_file.read_text(encoding="utf-8")
+    assert '"key": "secret-key"' in auth_file.read_text(encoding="utf-8")
+
+
+async def test_deepseek_provider_uses_stored_api_key(tmp_path, monkeypatch):
+    auth_file = tmp_path / "auth.json"
+    monkeypatch.setenv("PIY_AUTH_FILE", str(auth_file))
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    store = CredentialStore(auth_file)
+    await save_api_key("deepseek", "stored-deepseek-key", store)
+    captured = {}
+
+    async def fake_worker(url, headers, payload, model, stream, max_retries, timeout):
+        captured.update(headers)
+        message = AssistantMessage(
+            content=[TextContent(text="ok")],
+            api=model.api,
+            provider=model.provider,
+            model=model.id,
+            stop_reason=StopReason.STOP,
+            timestamp=1,
+        )
+        await stream.push(DoneEvent(message=message))
+        await stream.end(message)
+
+    monkeypatch.setattr(openai, "_stream_openai", fake_worker)
+    provider = DeepSeekProvider()
+    model = Model(
+        id="deepseek-v4-flash",
+        name="DeepSeek V4 Flash",
+        api="openai-chat-completions",
+        provider="deepseek",
+        base_url="https://api.deepseek.com",
+    )
+
+    assert await get_provider_token("deepseek", store) == "stored-deepseek-key"
+    events = [event async for event in await provider.stream(model, Context())]
+
+    assert events[-1].type == "done"
+    assert captured["Authorization"] == "Bearer stored-deepseek-key"

@@ -55,6 +55,10 @@ class OpenAIProvider(BaseProvider):
     def provider_id(self) -> str:
         return self._provider_id
 
+    @property
+    def requires_api_key(self) -> bool:
+        return self._requires_api_key
+
     def build_headers(self, api_key: str, options: StreamOptions | None = None) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if api_key:

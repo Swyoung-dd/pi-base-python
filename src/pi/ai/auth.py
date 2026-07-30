@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import os
 
+from pi.ai.oauth import CredentialStore, resolve_oauth_access_token, resolve_stored_api_key
+from pi.ai.oauth_xai import register_xai_oauth
+
 _ENV_KEY_MAP: dict[str, list[str]] = {
     "openai": ["OPENAI_API_KEY"],
     "anthropic": ["ANTHROPIC_API_KEY"],
@@ -36,11 +39,14 @@ def get_api_key(provider: str) -> str | None:
     return None
 
 
-async def get_provider_token(provider: str) -> str | None:
-    """优先解析并刷新 OAuth token，再回退到环境变量 API key。"""
-    from pi.ai.oauth import resolve_oauth_access_token
-    from pi.ai.oauth_xai import register_xai_oauth
-
+async def get_provider_token(
+    provider: str,
+    store: CredentialStore | None = None,
+) -> str | None:
+    """优先解析保存凭据，再回退到环境变量 API key。"""
     register_xai_oauth()
-    oauth_token = await resolve_oauth_access_token(provider)
+    stored_api_key = await resolve_stored_api_key(provider, store)
+    if stored_api_key:
+        return stored_api_key
+    oauth_token = await resolve_oauth_access_token(provider, store)
     return oauth_token or get_api_key(provider)

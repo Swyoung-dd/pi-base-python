@@ -2,23 +2,34 @@
 
 from pi.agent.agent import Agent, AgentOptions
 from pi.ai.models import list_models
+from pi.ai.oauth import CredentialStore, resolve_stored_api_key
 from pi.ai.types import Model
 from pi.coding_agent.config import Config, load_config
 from pi.coding_agent.setup import run_setup
 
 
-def test_setup_selects_and_persists_model(tmp_path, monkeypatch):
+async def test_setup_selects_model_api_key_and_persists_both(tmp_path, monkeypatch):
     config = Config(
         config_dir=tmp_path,
         sessions_dir=tmp_path / "sessions",
     )
-    monkeypatch.setattr("pi.coding_agent.setup.click.prompt", lambda *args, **kwargs: 1)
-    run_setup(config)
+    models = list_models()
+    selected = next(model for model in models if model.provider == "deepseek")
+    selected_index = models.index(selected) + 1
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("PIY_API_KEY_DEEPSEEK", raising=False)
+    responses = iter([selected_index, "setup-key"])
+    monkeypatch.setattr(
+        "pi.coding_agent.setup.click.prompt",
+        lambda *args, **kwargs: next(responses),
+    )
+    store = CredentialStore(tmp_path / "auth.json")
+    await run_setup(config, store)
 
-    selected = list_models()[0]
     restored = load_config(tmp_path)
     assert restored.is_configured
     assert (restored.provider, restored.model) == (selected.provider, selected.id)
+    assert await resolve_stored_api_key(selected.provider, store) == "setup-key"
 
 
 def test_default_config_uses_piy_directory_and_environment(tmp_path, monkeypatch):

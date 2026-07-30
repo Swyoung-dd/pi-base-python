@@ -11,6 +11,7 @@ from pi.ai.types import (
     StreamOptions,
     TextContent,
 )
+from pi.coding_agent import cli
 
 
 def test_builtin_provider_ecosystem_is_registered():
@@ -72,3 +73,28 @@ async def test_openai_compatible_provider_merges_headers_and_allows_local_auth(
         "X-Model": "model",
         "X-Call": "call",
     }
+
+
+async def test_stream_function_resolves_provider_for_current_model(monkeypatch):
+    calls = []
+
+    class FakeProvider:
+        def __init__(self, provider_id):
+            self.provider_id = provider_id
+
+        async def stream(self, model, context, options):
+            calls.append((self.provider_id, model.id))
+            return self.provider_id
+
+    providers = {
+        "first": FakeProvider("first"),
+        "second": FakeProvider("second"),
+    }
+    monkeypatch.setattr(cli, "get_provider", providers.get)
+    stream_fn = cli._make_stream_fn()
+    first = Model(id="one", name="One", api="test", provider="first")
+    second = Model(id="two", name="Two", api="test", provider="second")
+
+    assert await stream_fn(first, Context(), None) == "first"
+    assert await stream_fn(second, Context(), None) == "second"
+    assert calls == [("first", "one"), ("second", "two")]

@@ -23,6 +23,14 @@ class OAuthCredential(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class ApiKeyCredential(BaseModel):
+    type: Literal["api_key"] = "api_key"
+    key: str
+
+
+Credential = OAuthCredential | ApiKeyCredential
+
+
 class OAuthEvent(BaseModel):
     type: Literal["info", "device_code", "progress"]
     message: str = ""
@@ -44,29 +52,33 @@ class OAuthFlow(Protocol):
 
 
 CredentialModifier = Callable[
-    [OAuthCredential | None],
-    OAuthCredential | None | Awaitable[OAuthCredential | None],
+    [Credential | None],
+    Credential | None | Awaitable[Credential | None],
 ]
 
 
-class OAuthCredentialStore:
+class CredentialStore:
     """使用原子替换写入 auth.json，并按 provider 串行化进程内修改。"""
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self._locks: dict[str, asyncio.Lock] = {}
 
-    def _read_all(self) -> dict[str, OAuthCredential]:
+    def _read_all(self) -> dict[str, Credential]:
         if not self.path.exists():
             return {}
         raw = json.loads(self.path.read_text(encoding="utf-8"))
-        return {
-            provider: OAuthCredential.model_validate(value)
-            for provider, value in raw.items()
-            if isinstance(value, dict) and value.get("type") == "oauth"
-        }
+        credentials: dict[str, Credential] = {}
+        for provider, value in raw.items():
+            if not isinstance(value, dict):
+                continue
+            if value.get("type") == "oauth":
+                credentials[provider] = OAuthCredential.model_validate(value)
+            elif value.get("type") == "api_key":
+                credentials[provider] = ApiKeyCredential.model_validate(value)
+        return credentials
 
-    def _write_all(self, credentials: dict[str, OAuthCredential]) -> None:
+    def _write_all(self, credentials: dict[str, Credential]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
         data = {
@@ -81,7 +93,7 @@ class OAuthCredentialStore:
             temporary.chmod(0o600)
         os.replace(temporary, self.path)
 
-    async def read(self, provider_id: str) -> OAuthCredential | None:
+    async def read(self, provider_id: str) -> Credential | None:
         credentials = await asyncio.to_thread(self._read_all)
         return credentials.get(provider_id)
 
@@ -92,7 +104,7 @@ class OAuthCredentialStore:
         self,
         provider_id: str,
         modifier: CredentialModifier,
-    ) -> OAuthCredential | None:
+    ) -> Credential | None:
         lock = self._locks.setdefault(provider_id, asyncio.Lock())
         async with lock:
             credentials = await asyncio.to_thread(self._read_all)
@@ -113,7 +125,7 @@ class OAuthCredentialStore:
 
 
 _flows: dict[str, OAuthFlow] = {}
-_default_store: OAuthCredentialStore | None = None
+_default_store: CredentialStore | None = None
 
 
 def register_oauth_flow(provider_id: str, flow: OAuthFlow) -> None:
@@ -128,37 +140,61 @@ def list_oauth_flows() -> list[str]:
     return sorted(_flows)
 
 
-def get_default_oauth_store() -> OAuthCredentialStore:
+def get_default_credential_store() -> CredentialStore:
     global _default_store
     path = Path(os.environ.get("PIY_AUTH_FILE", Path.home() / ".piy" / "auth.json"))
     if _default_store is None or _default_store.path != path:
-        _default_store = OAuthCredentialStore(path)
+        _default_store = CredentialStore(path)
     return _default_store
+
+
+async def save_api_key(
+    provider_id: str,
+    api_key: str,
+    store: CredentialStore | None = None,
+) -> ApiKeyCredential:
+    """保存 provider API Key，不接受空值。"""
+    key = api_key.strip()
+    if not key:
+        raise ValueError("API key cannot be empty")
+    credential = ApiKeyCredential(key=key)
+    target = store or get_default_credential_store()
+    await target.modify(provider_id, lambda current: credential)
+    return credential
+
+
+async def resolve_stored_api_key(
+    provider_id: str,
+    store: CredentialStore | None = None,
+) -> str | None:
+    """读取 auth.json 中保存的 API Key。"""
+    credential = await (store or get_default_credential_store()).read(provider_id)
+    return credential.key if isinstance(credential, ApiKeyCredential) else None
 
 
 async def login_oauth(
     provider_id: str,
     notify: OAuthNotifier,
-    store: OAuthCredentialStore | None = None,
+    store: CredentialStore | None = None,
 ) -> OAuthCredential:
     flow = get_oauth_flow(provider_id)
     if flow is None:
         raise ValueError(f"Provider does not support OAuth login: {provider_id}")
     credential = await flow.login(notify)
-    target = store or get_default_oauth_store()
+    target = store or get_default_credential_store()
     await target.modify(provider_id, lambda current: credential)
     return credential
 
 
 async def resolve_oauth_access_token(
     provider_id: str,
-    store: OAuthCredentialStore | None = None,
+    store: CredentialStore | None = None,
     minimum_validity_ms: int = 5 * 60 * 1000,
 ) -> str | None:
     """解析有效 access token；临近过期时在 provider 锁内只刷新一次。"""
-    target = store or get_default_oauth_store()
+    target = store or get_default_credential_store()
     credential = await target.read(provider_id)
-    if credential is None:
+    if not isinstance(credential, OAuthCredential):
         return None
 
     def expires_soon(value: OAuthCredential) -> bool:
@@ -171,12 +207,12 @@ async def resolve_oauth_access_token(
                 f"OAuth token expired and no refresh flow is registered: {provider_id}"
             )
 
-        async def refresh(current: OAuthCredential | None) -> OAuthCredential | None:
-            if current is None or not expires_soon(current):
+        async def refresh(current: Credential | None) -> OAuthCredential | None:
+            if not isinstance(current, OAuthCredential) or not expires_soon(current):
                 return None
             return await flow.refresh(current)
 
         credential = await target.modify(provider_id, refresh)
-        if credential is None:
+        if not isinstance(credential, OAuthCredential):
             return None
     return credential.access

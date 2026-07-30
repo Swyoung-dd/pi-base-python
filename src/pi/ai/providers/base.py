@@ -20,6 +20,11 @@ class BaseProvider(abc.ABC):
     """LLM 提供商抽象基类。"""
 
     @property
+    def requires_api_key(self) -> bool:
+        """该 provider 是否需要凭据。"""
+        return True
+
+    @property
     @abc.abstractmethod
     def provider_id(self) -> str:
         """提供商标识符，如 'openai'、'anthropic'。"""

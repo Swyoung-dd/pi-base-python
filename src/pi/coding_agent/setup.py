@@ -5,11 +5,16 @@ from __future__ import annotations
 import click
 
 from pi.ai.models import list_models
+from pi.ai.oauth import CredentialStore
 from pi.coding_agent.config import Config, save_config
+from pi.coding_agent.model_auth import ensure_model_auth
 
 
-def run_setup(config: Config) -> Config:
-    """交互选择模型并保存，不收集或写入 API 密钥。"""
+async def run_setup(
+    config: Config,
+    credential_store: CredentialStore | None = None,
+) -> Config:
+    """交互选择模型，按需收集凭据并保存默认配置。"""
     models = list_models()
     if not models:
         raise click.ClickException("No models are available")
@@ -23,6 +28,8 @@ def run_setup(config: Config) -> Config:
         default=1,
     )
     model = models[selected - 1]
+    if not await ensure_model_auth(model, credential_store):
+        return config
     config.model = model.id
     config.provider = model.provider
     save_config(config)

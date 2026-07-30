@@ -29,6 +29,7 @@ piY --setup
 ```
 
 在模型列表中选择 `deepseek/deepseek-v4-flash` 或 `deepseek/deepseek-v4-pro`。
+也可以进入交互模式后执行 `/model`，选择模型并按提示输入 API Key。凭据保存在用户目录的 `.piy/auth.json`，输入内容不会显示在终端中。
 
 ## 命令
 

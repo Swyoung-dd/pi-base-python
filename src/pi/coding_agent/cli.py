@@ -17,11 +17,11 @@ from pi.agent.agent import Agent, AgentOptions
 from pi.agent.session import JsonlStorage
 from pi.agent.types import AgentTool
 from pi.ai.models import get_model, list_models
-from pi.ai.oauth import OAuthEvent, get_default_oauth_store, login_oauth
+from pi.ai.oauth import OAuthEvent, get_default_credential_store, login_oauth
 from pi.ai.oauth_xai import register_xai_oauth
 from pi.ai.providers.registry import get_provider
 from pi.ai.types import ModelThinkingLevel
-from pi.coding_agent.config import load_config
+from pi.coding_agent.config import load_config, save_config
 from pi.coding_agent.extensions import load_extensions
 from pi.coding_agent.file_references import expand_file_references
 from pi.coding_agent.output import PrintRenderer
@@ -84,13 +84,12 @@ async def _build_runtime(config, cwd: Path):
     )
 
 
-def _make_stream_fn(model):
-    """创建绑定到模型提供商的 stream 函数。"""
-    provider = get_provider(model.provider)
-    if provider is None:
-        raise RuntimeError(f"No provider registered for: {model.provider}")
-
+def _make_stream_fn():
+    """创建按当前模型动态选择 provider 的 stream 函数。"""
     async def stream_fn(m, ctx, options):
+        provider = get_provider(m.provider)
+        if provider is None:
+            raise RuntimeError(f"No provider registered for: {m.provider}")
         return await provider.stream(m, ctx, options)
 
     return stream_fn
@@ -115,7 +114,7 @@ async def run_print_mode(prompt: str, config, output_format: str = "text") -> No
     cwd = Path.cwd()
     tools, system_prompt, _, _ = await _build_runtime(config, cwd)
 
-    stream_fn = _make_stream_fn(model)
+    stream_fn = _make_stream_fn()
 
     agent = Agent(
         AgentOptions(
@@ -144,13 +143,18 @@ async def run_interactive_mode(
     cwd = Path.cwd()
     tools, system_prompt, commands, skills = await _build_runtime(config, cwd)
 
-    stream_fn = _make_stream_fn(model)
+    stream_fn = _make_stream_fn()
     session_id = await resolve_session_id(
         config.sessions_dir,
         requested_id=requested_session_id,
         continue_latest=continue_latest,
     )
     session_storage = JsonlStorage(session_path(config.sessions_dir, session_id))
+
+    def persist_model(selected_model) -> None:
+        config.model = selected_model.id
+        config.provider = selected_model.provider
+        save_config(config)
 
     session = InteractiveSession(
         model=model,
@@ -165,6 +169,7 @@ async def run_interactive_mode(
         skills=skills,
         cwd=cwd,
         history_file=config.config_dir / "history",
+        on_model_selected=persist_model,
     )
     await session.run()
 
@@ -191,13 +196,16 @@ async def oauth_login(provider_id: str) -> None:
 
 
 async def oauth_logout(provider_id: str) -> None:
-    await get_default_oauth_store().delete(provider_id)
+    await get_default_credential_store().delete(provider_id)
     click.echo(f"Logged out: {provider_id}")
 
 
 async def print_auth_providers() -> None:
-    for provider_id in await get_default_oauth_store().list():
-        click.echo(f"{provider_id:24s} OAuth")
+    store = get_default_credential_store()
+    for provider_id in await store.list():
+        credential = await store.read(provider_id)
+        credential_type = "API key" if credential and credential.type == "api_key" else "OAuth"
+        click.echo(f"{provider_id:24s} {credential_type}")
 
 
 @click.command()
@@ -207,8 +215,8 @@ async def print_auth_providers() -> None:
 @click.option("-c", "--continue", "continue_session", is_flag=True, help="Resume latest session")
 @click.option("--list-sessions", is_flag=True, help="List saved sessions and exit")
 @click.option("--login", "login_provider", default=None, help="Login to an OAuth provider")
-@click.option("--logout", "logout_provider", default=None, help="Remove stored OAuth credentials")
-@click.option("--auth-list", is_flag=True, help="List stored OAuth providers and exit")
+@click.option("--logout", "logout_provider", default=None, help="Remove stored credentials")
+@click.option("--auth-list", is_flag=True, help="List stored credentials and exit")
 @click.option("--no-skills", is_flag=True, help="Disable skills discovery")
 @click.option("--setup", "setup_config", is_flag=True, help="Run model setup and exit")
 @click.option(
@@ -268,10 +276,12 @@ def main(
         asyncio.run(print_auth_providers())
         return
     if setup_config:
-        run_setup(config)
+        asyncio.run(run_setup(config))
         return
     if not config.is_configured and prompt_text is None and click.get_text_stream("stdin").isatty():
-        run_setup(config)
+        asyncio.run(run_setup(config))
+        if not config.is_configured:
+            return
     if list_sessions:
         asyncio.run(print_sessions(config))
         return
