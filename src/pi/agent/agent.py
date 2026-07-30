@@ -12,8 +12,15 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any
 
-from pi.agent.agent_loop import run_agent_loop
-from pi.agent.compaction import estimate_context_tokens
+from pi.agent.agent_loop import AgentLoopResult, run_agent_loop
+from pi.agent.compaction import (
+    CompactionResult,
+    apply_compaction_summary,
+    compact_messages,
+    estimate_context_tokens,
+    format_messages_for_summary,
+    prepare_compaction,
+)
 from pi.agent.session.base import SessionStorage
 from pi.agent.types import (
     AgentAssistantMessage,
@@ -32,12 +39,14 @@ from pi.agent.types import (
 )
 from pi.ai.streaming import EventStream
 from pi.ai.types import (
+    Context,
     ImageContent,
     Model,
     ModelThinkingLevel,
     StreamOptions,
     TextContent,
     ThinkingContent,
+    UserMessage,
 )
 
 StreamFn = Callable[
@@ -46,6 +55,14 @@ StreamFn = Callable[
 ]
 
 AgentListener = Callable[[AgentEvent], Coroutine[Any, Any, None]]
+
+_COMPACTION_SYSTEM_PROMPT = """你负责压缩编码 agent 的早期会话。
+请生成可供后续模型继续工作的结构化摘要，必须保留：
+- 用户目标、约束和偏好
+- 已完成工作、修改文件和验证结果
+- 关键技术决策及其原因
+- 当前错误、阻塞项和下一步
+不要添加原会话中不存在的事实。"""
 
 
 @dataclass
@@ -191,12 +208,7 @@ class Agent:
         if self._session_loaded:
             return
         if self._session_storage is not None:
-            branch = await self._session_storage.get_branch()
-            self._state.messages = [
-                entry.message
-                for entry in branch
-                if entry.type == "message" and entry.message is not None
-            ]
+            self._state.messages = await self._session_storage.get_context_messages()
         self._session_loaded = True
 
     async def switch_session(
@@ -252,14 +264,14 @@ class Agent:
         self._state.messages.extend(messages)
 
         try:
-            new_messages: list[AgentMessage] = []
+            current_context = previous_messages
             pending_prompts = messages
             while pending_prompts:
-                batch = await run_agent_loop(
+                result: AgentLoopResult = await run_agent_loop(
                     prompts=pending_prompts,
                     context=AgentContext(
                         system_prompt=self._state.system_prompt,
-                        messages=previous_messages + new_messages,
+                        messages=current_context,
                         tools=self._state.tools[:],
                     ),
                     model=self._state.model,
@@ -278,12 +290,26 @@ class Agent:
                     tool_execution=self._tool_execution,
                     tool_context=self._tool_context,
                     get_steering_messages=self._steering_queue.drain,
+                    compact_fn=self._compact_with_model,
                 )
-                new_messages.extend(batch)
+                current_context = result.context_messages
+                if self._session_storage is not None:
+                    if result.compactions:
+                        compaction = result.compactions[-1]
+                        await self._session_storage.append_compaction(
+                            current_context,
+                            compaction.original_tokens,
+                            compaction.compacted_tokens,
+                            compaction.dropped_messages,
+                            compaction.usage,
+                        )
+                    else:
+                        for message in result.messages:
+                            await self._session_storage.append_message(message)
                 last_assistant = next(
                     (
                         message
-                        for message in reversed(batch)
+                        for message in reversed(result.messages)
                         if isinstance(message, AgentAssistantMessage)
                     ),
                     None,
@@ -294,10 +320,7 @@ class Agent:
                 if not pending_prompts:
                     pending_prompts = self._follow_up_queue.drain()
 
-            self._state.messages = previous_messages + new_messages
-            if self._session_storage is not None:
-                for message in new_messages:
-                    await self._session_storage.append_message(message)
+            self._state.messages = current_context
         except Exception as exc:
             now = int(time.time() * 1000)
             failure = AgentAssistantMessage(
@@ -318,6 +341,52 @@ class Agent:
             self._state.streaming_message = None
             self._state.pending_tool_calls.clear()
             self._idle_event.set()
+
+    async def _compact_with_model(
+        self,
+        messages: list[AgentMessage],
+        target_tokens: int,
+        original_tokens: int,
+    ) -> CompactionResult:
+        """使用当前模型总结旧轮次；请求失败时退回确定性压缩。"""
+        if self._stream_fn is None or self._state.model is None:
+            return compact_messages(messages, target_tokens, original_tokens)
+        plan = prepare_compaction(messages, target_tokens, original_tokens)
+        if not plan.dropped:
+            return apply_compaction_summary(plan, "")
+        transcript = format_messages_for_summary(plan.dropped)
+        prompt = UserMessage(
+            content=f"请总结以下早期会话：\n\n{transcript}",
+            timestamp=int(time.time() * 1000),
+        )
+        try:
+            stream = await self._stream_fn(
+                self._state.model,
+                Context(system_prompt=_COMPACTION_SYSTEM_PROMPT, messages=[prompt]),
+                StreamOptions(
+                    temperature=0,
+                    max_tokens=min(4096, max(256, plan.summary_budget)),
+                    session_id=self._session_id,
+                    abort_event=self._abort_event,
+                    thinking_level=ModelThinkingLevel.OFF,
+                ),
+            )
+            final = None
+            async for event in stream:
+                if event.type == "done":
+                    final = event.message
+                elif event.type == "error":
+                    raise RuntimeError(event.error.error_message or "Compaction request failed")
+            if final is None:
+                raise RuntimeError("Compaction request returned no final message")
+            summary = "\n".join(
+                block.text for block in final.content if isinstance(block, TextContent)
+            ).strip()
+            if not summary:
+                raise RuntimeError("Compaction request returned an empty summary")
+            return apply_compaction_summary(plan, summary, final.usage)
+        except Exception:
+            return compact_messages(messages, target_tokens, original_tokens)
 
     async def _process_event(self, event: AgentEvent) -> None:
         if event.type == "message_start":

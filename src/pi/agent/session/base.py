@@ -16,8 +16,10 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from pi.agent.types import AgentMessage
+from pi.ai.types import Usage
 
 _MESSAGE_ADAPTER = TypeAdapter(AgentMessage)
+_MESSAGES_ADAPTER = TypeAdapter(list[AgentMessage])
 
 
 def _utc_now_iso() -> str:
@@ -107,3 +109,38 @@ class SessionStorage(abc.ABC):
         entry_id = await self.append(entry)
         await self.set_leaf_id(entry_id)
         return entry_id
+
+    async def append_compaction(
+        self,
+        messages: list[AgentMessage],
+        original_tokens: int,
+        compacted_tokens: int,
+        dropped_messages: int,
+        usage: Usage | None = None,
+    ) -> str:
+        """追加包含完整有效上下文的压缩检查点。"""
+        leaf = await self.get_leaf_id()
+        entry = SessionEntry(
+            parent_id=leaf,
+            type="compaction",
+            data={
+                "messages": _MESSAGES_ADAPTER.dump_python(messages, mode="json"),
+                "original_tokens": original_tokens,
+                "compacted_tokens": compacted_tokens,
+                "dropped_messages": dropped_messages,
+                "usage": usage.model_dump(mode="json") if usage is not None else None,
+            },
+        )
+        entry_id = await self.append(entry)
+        await self.set_leaf_id(entry_id)
+        return entry_id
+
+    async def get_context_messages(self) -> list[AgentMessage]:
+        """从最近压缩检查点恢复有效上下文，并追加其后的消息。"""
+        messages: list[AgentMessage] = []
+        for entry in await self.get_branch():
+            if entry.type == "compaction" and entry.data and entry.data.get("messages") is not None:
+                messages = _MESSAGES_ADAPTER.validate_python(entry.data["messages"])
+            elif entry.type == "message" and entry.message is not None:
+                messages.append(entry.message)
+        return messages

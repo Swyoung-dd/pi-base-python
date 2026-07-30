@@ -2,11 +2,15 @@
 
 from pi.agent.agent import Agent, AgentOptions
 from pi.agent.compaction import (
+    apply_compaction_summary,
     compact_messages,
     estimate_context_tokens,
+    estimate_context_tokens_with_overhead,
     estimate_message_tokens,
     estimate_messages_tokens,
+    prepare_compaction,
 )
+from pi.agent.session import JsonlStorage
 from pi.agent.types import AgentAssistantMessage, create_user_message
 from pi.ai.streaming import DoneEvent, EventStream
 from pi.ai.types import AssistantMessage, Model, StopReason, TextContent, Usage
@@ -69,10 +73,43 @@ def test_context_estimate_falls_back_to_all_messages_without_usage():
     assert result.last_usage_index is None
 
 
-async def test_agent_compacts_provider_view_without_mutating_history():
+def test_context_estimate_ignores_usage_before_compaction_summary():
+    messages = [
+        create_user_message("old " + "x" * 100),
+        _assistant("old response " + "y" * 100, 1),
+        create_user_message("recent"),
+        _assistant("recent response", 2),
+    ]
+    messages[-1].usage = Usage(input=900, output=100, total_tokens=1_000)
+    plan = prepare_compaction(messages, target_tokens=40, original_tokens=1_000)
+
+    compacted = apply_compaction_summary(plan, "summary")
+    result = estimate_context_tokens(compacted.messages)
+
+    assert result.usage_tokens == 0
+    assert result.tokens == estimate_messages_tokens(compacted.messages)
+
+
+def test_context_estimate_includes_system_prompt_before_first_provider_usage():
+    messages = [create_user_message("short prompt")]
+
+    tokens = estimate_context_tokens_with_overhead(
+        messages,
+        system_prompt="system rules " * 100,
+        tools=[],
+    )
+
+    assert tokens > estimate_messages_tokens(messages) + 200
+
+
+async def test_agent_persists_model_generated_compaction_checkpoint(tmp_path):
     model = Model(id="test-model", name="Test", api="test", provider="test")
     seen_contexts = []
     event_types: list[str] = []
+    storage = JsonlStorage(tmp_path / "session.jsonl")
+    for index in range(5):
+        await storage.append_message(create_user_message(f"old-{index} " + "x" * 80))
+        await storage.append_message(_assistant(f"reply-{index} " + "y" * 80, index))
 
     async def stream_fn(current_model, context, options):
         seen_contexts.append(context)
@@ -96,22 +133,23 @@ async def test_agent_compacts_provider_view_without_mutating_history():
         AgentOptions(
             model=model,
             stream_fn=stream_fn,
+            session_storage=storage,
             context_token_limit=80,
             compact_to_tokens=60,
         )
     )
-    for index in range(5):
-        agent.state.messages.extend(
-            [
-                create_user_message(f"old-{index} " + "x" * 80),
-                _assistant(f"reply-{index} " + "y" * 80, index),
-            ]
-        )
+    await agent.restore()
     original_count = len(agent.state.messages)
     agent.subscribe(listener)
 
     await agent.prompt("new prompt")
 
-    assert seen_contexts[0].messages[0].content.startswith("[已压缩的早期对话]")
-    assert len(agent.state.messages) == original_count + 2
+    assert seen_contexts[0].system_prompt.startswith("你负责压缩编码 agent")
+    assert seen_contexts[1].messages[0].content.startswith("[已压缩的早期对话]\nok")
+    assert len(agent.state.messages) < original_count + 2
     assert "context_compacted" in event_types
+
+    restored = JsonlStorage(tmp_path / "session.jsonl")
+    restored_messages = await restored.get_context_messages()
+    assert restored_messages == agent.state.messages
+    assert (await restored.get_branch())[-1].type == "compaction"

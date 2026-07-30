@@ -15,10 +15,15 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from typing import Any
 
-from pi.agent.compaction import compact_messages, estimate_messages_tokens
+from pi.agent.compaction import (
+    CompactionResult,
+    compact_messages,
+    estimate_context_tokens_with_overhead,
+)
 from pi.agent.types import (
     AgentAssistantMessage,
     AgentContext,
@@ -57,6 +62,17 @@ from pi.ai.types import (
 from pi.ai.types import (
     UserMessage as AiUserMessage,
 )
+
+CompactFn = Callable[[list[AgentMessage], int, int], Awaitable[CompactionResult]]
+
+
+@dataclass
+class AgentLoopResult:
+    """一次 agent loop 产生的消息与最终有效上下文。"""
+
+    messages: list[AgentMessage]
+    context_messages: list[AgentMessage]
+    compactions: list[CompactionResult] = field(default_factory=list)
 
 
 async def _next_stream_event(
@@ -187,7 +203,8 @@ async def run_agent_loop(
     tool_execution: ToolExecutionMode = ToolExecutionMode.PARALLEL,
     tool_context: Any = None,
     get_steering_messages: Callable[[], list[AgentMessage]] | None = None,
-) -> list[AgentMessage]:
+    compact_fn: CompactFn | None = None,
+) -> AgentLoopResult:
     """Run the agent loop with a new prompt.
 
     Args:
@@ -204,6 +221,7 @@ async def run_agent_loop(
     all_messages = list(context.messages)
     all_messages.extend(prompts)
     new_messages: list[AgentMessage] = list(prompts)
+    compactions: list[CompactionResult] = []
 
     tools_map = {t.name: t for t in context.tools}
     ai_tools = [t.to_ai_tool() for t in context.tools] if context.tools else None
@@ -211,11 +229,21 @@ async def run_agent_loop(
     while True:
         context_messages = all_messages
         if options and options.context_token_limit:
-            estimated_tokens = estimate_messages_tokens(all_messages)
+            estimated_tokens = estimate_context_tokens_with_overhead(
+                all_messages,
+                context.system_prompt,
+                context.tools,
+            )
             if estimated_tokens > options.context_token_limit:
                 target_tokens = options.compact_to_tokens or (options.context_token_limit * 3 // 4)
-                compacted = compact_messages(all_messages, target_tokens)
-                context_messages = compacted.messages
+                compacted = (
+                    await compact_fn(all_messages, target_tokens, estimated_tokens)
+                    if compact_fn
+                    else compact_messages(all_messages, target_tokens, estimated_tokens)
+                )
+                all_messages = compacted.messages
+                context_messages = all_messages
+                compactions.append(compacted)
                 await sink(
                     ContextCompactedEvent(
                         original_tokens=compacted.original_tokens,
@@ -372,4 +400,8 @@ async def run_agent_loop(
         new_messages.extend(steering)
 
     await sink(AgentEndEvent(messages=new_messages))
-    return new_messages
+    return AgentLoopResult(
+        messages=new_messages,
+        context_messages=all_messages,
+        compactions=compactions,
+    )
