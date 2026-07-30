@@ -143,7 +143,7 @@ class OpenAIProvider(BaseProvider):
         options: StreamOptions | None = None,
     ) -> EventStream:
         stream_obj = EventStream()
-        api_key = self.resolve_api_key(options)
+        api_key = await self.resolve_api_key(options)
         if not api_key and self._requires_api_key:
             await self._emit_error(
                 stream_obj,

@@ -17,6 +17,8 @@ from pi.agent.agent import Agent, AgentOptions
 from pi.agent.session import JsonlStorage
 from pi.agent.types import AgentEvent, AgentTool
 from pi.ai.models import get_model, list_models
+from pi.ai.oauth import OAuthEvent, get_default_oauth_store, login_oauth
+from pi.ai.oauth_xai import register_xai_oauth
 from pi.ai.providers.registry import get_provider
 from pi.ai.types import ModelThinkingLevel
 from pi.coding_agent.config import load_config
@@ -157,12 +159,39 @@ async def print_sessions(config) -> None:
         click.echo(f"{item.session_id:32s}  {item.message_count:4d}  {updated}  {item.preview}")
 
 
+def _print_oauth_event(event: OAuthEvent) -> None:
+    if event.type == "device_code":
+        click.echo(f"Open: {event.verification_uri}")
+        click.echo(f"Code: {event.user_code}")
+    elif event.message:
+        click.echo(event.message)
+
+
+async def oauth_login(provider_id: str) -> None:
+    register_xai_oauth()
+    await login_oauth(provider_id, _print_oauth_event)
+    click.echo(f"Logged in: {provider_id}")
+
+
+async def oauth_logout(provider_id: str) -> None:
+    await get_default_oauth_store().delete(provider_id)
+    click.echo(f"Logged out: {provider_id}")
+
+
+async def print_auth_providers() -> None:
+    for provider_id in await get_default_oauth_store().list():
+        click.echo(f"{provider_id:24s} OAuth")
+
+
 @click.command()
 @click.option("-p", "--prompt", "prompt_text", default=None, help="One-shot prompt (print mode)")
 @click.option("-m", "--model", "model_id", default=None, help="Model ID to use")
 @click.option("--session", "session_id", default=None, help="Resume or create a session ID")
 @click.option("-c", "--continue", "continue_session", is_flag=True, help="Resume latest session")
 @click.option("--list-sessions", is_flag=True, help="List saved sessions and exit")
+@click.option("--login", "login_provider", default=None, help="Login to an OAuth provider")
+@click.option("--logout", "logout_provider", default=None, help="Remove stored OAuth credentials")
+@click.option("--auth-list", is_flag=True, help="List stored OAuth providers and exit")
 @click.option(
     "--thinking",
     type=click.Choice([level.value for level in ModelThinkingLevel]),
@@ -179,6 +208,9 @@ def main(
     session_id,
     continue_session,
     list_sessions,
+    login_provider,
+    logout_provider,
+    auth_list,
     thinking,
     list_models_flag,
     version,
@@ -196,6 +228,15 @@ def main(
         return
 
     config = load_config()
+    if login_provider:
+        asyncio.run(oauth_login(login_provider))
+        return
+    if logout_provider:
+        asyncio.run(oauth_logout(logout_provider))
+        return
+    if auth_list:
+        asyncio.run(print_auth_providers())
+        return
     if list_sessions:
         asyncio.run(print_sessions(config))
         return

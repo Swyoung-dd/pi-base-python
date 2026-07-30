@@ -39,13 +39,13 @@ class BaseProvider(abc.ABC):
         """
         ...
 
-    def resolve_api_key(self, options: StreamOptions | None = None) -> str | None:
+    async def resolve_api_key(self, options: StreamOptions | None = None) -> str | None:
         """从选项或环境变量解析 API 密钥。"""
         if options and options.api_key:
             return options.api_key
-        from pi.ai.auth import get_api_key
+        from pi.ai.auth import get_provider_token
 
-        return get_api_key(self.provider_id)
+        return await get_provider_token(self.provider_id)
 
     def build_headers(self, api_key: str, options: StreamOptions | None = None) -> dict[str, str]:
         """构建 API 请求的 HTTP 头。由各提供商覆盖。"""

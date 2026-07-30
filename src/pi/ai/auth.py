@@ -34,3 +34,13 @@ def get_api_key(provider: str) -> str | None:
     if generic:
         return generic
     return None
+
+
+async def get_provider_token(provider: str) -> str | None:
+    """优先解析并刷新 OAuth token，再回退到环境变量 API key。"""
+    from pi.ai.oauth import resolve_oauth_access_token
+    from pi.ai.oauth_xai import register_xai_oauth
+
+    register_xai_oauth()
+    oauth_token = await resolve_oauth_access_token(provider)
+    return oauth_token or get_api_key(provider)

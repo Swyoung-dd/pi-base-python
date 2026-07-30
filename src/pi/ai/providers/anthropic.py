@@ -128,7 +128,7 @@ class AnthropicProvider(BaseProvider):
         options: StreamOptions | None = None,
     ) -> EventStream:
         stream_obj = EventStream()
-        api_key = self.resolve_api_key(options)
+        api_key = await self.resolve_api_key(options)
         if not api_key:
             await self._emit_error(stream_obj, model, "No API key for provider 'anthropic'")
             return stream_obj
