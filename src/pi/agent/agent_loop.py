@@ -24,6 +24,7 @@ from pi.agent.types import (
     AgentEndEvent,
     AgentEventSink,
     AgentMessage,
+    AgentTool,
     AgentToolCall,
     AgentToolResult,
     AgentToolResultMessage,
@@ -35,6 +36,7 @@ from pi.agent.types import (
     TextDeltaUpdateEvent,
     ThinkingDeltaUpdateEvent,
     ToolExecutionEndEvent,
+    ToolExecutionMode,
     ToolExecutionStartEvent,
     TurnEndEvent,
 )
@@ -87,6 +89,54 @@ async def _next_stream_event(
         return None, False
 
 
+async def _execute_tool_call(
+    tool_call: ToolCall,
+    tool: AgentTool | None,
+    abort_event: asyncio.Event | None,
+) -> AgentToolResult:
+    """执行单个工具，并允许取消长时间运行的任务。"""
+    if tool is None:
+        return AgentToolResult(
+            tool_call_id=tool_call.id,
+            tool_name=tool_call.name,
+            content=[TextContent(text=f"Unknown tool: {tool_call.name}")],
+            is_error=True,
+        )
+
+    call = AgentToolCall(
+        id=tool_call.id,
+        name=tool_call.name,
+        arguments=tool_call.arguments,
+    )
+    execution_task = asyncio.create_task(tool.execute(call, None))
+    try:
+        if abort_event is None:
+            return await execution_task
+        abort_task = asyncio.create_task(abort_event.wait())
+        done, pending = await asyncio.wait(
+            {execution_task, abort_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        if abort_task in done:
+            return AgentToolResult(
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
+                content=[TextContent(text="Tool execution aborted")],
+                is_error=True,
+            )
+        return execution_task.result()
+    except Exception as exc:
+        return AgentToolResult(
+            tool_call_id=tool_call.id,
+            tool_name=tool_call.name,
+            content=[TextContent(text=f"Tool error: {exc}")],
+            is_error=True,
+        )
+
+
 def convert_to_llm(messages: list[AgentMessage]) -> list[Message]:
     """Convert agent messages to LLM messages for the provider call."""
     result: list[Message] = []
@@ -132,6 +182,7 @@ async def run_agent_loop(
     stream_fn: Any,
     sink: AgentEventSink,
     options: StreamOptions | None = None,
+    tool_execution: ToolExecutionMode = ToolExecutionMode.PARALLEL,
 ) -> list[AgentMessage]:
     """Run the agent loop with a new prompt.
 
@@ -262,44 +313,38 @@ async def run_agent_loop(
             await sink(TurnEndEvent(message=agent_msg, tool_results=[]))
             break
 
-        tool_results: list[AgentToolResult] = []
-        for tc in tool_calls:
+        async def execute_and_emit(tool_call: ToolCall) -> AgentToolResult:
             await sink(
                 ToolExecutionStartEvent(
-                    tool_call_id=tc.id,
-                    tool_name=tc.name,
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
                 )
             )
-
-            tool = tools_map.get(tc.name)
-            if tool is None:
-                result = AgentToolResult(
-                    tool_call_id=tc.id,
-                    tool_name=tc.name,
-                    content=[TextContent(text=f"Unknown tool: {tc.name}")],
-                    is_error=True,
-                )
-            else:
-                call = AgentToolCall(id=tc.id, name=tc.name, arguments=tc.arguments)
-                try:
-                    result = await tool.execute(call, None)
-                except Exception as exc:
-                    result = AgentToolResult(
-                        tool_call_id=tc.id,
-                        tool_name=tc.name,
-                        content=[TextContent(text=f"Tool error: {exc}")],
-                        is_error=True,
-                    )
-
-            tool_results.append(result)
+            abort_event = options.abort_event if options else None
+            result = await _execute_tool_call(
+                tool_call,
+                tools_map.get(tool_call.name),
+                abort_event,
+            )
             await sink(
                 ToolExecutionEndEvent(
-                    tool_call_id=tc.id,
-                    tool_name=tc.name,
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
                     result=result,
                 )
             )
+            return result
 
+        if tool_execution == ToolExecutionMode.PARALLEL:
+            tool_results = await asyncio.gather(
+                *(execute_and_emit(tool_call) for tool_call in tool_calls)
+            )
+        else:
+            tool_results = []
+            for tool_call in tool_calls:
+                tool_results.append(await execute_and_emit(tool_call))
+
+        for tc, result in zip(tool_calls, tool_results, strict=True):
             tr_msg = AgentToolResultMessage(
                 tool_call_id=tc.id,
                 tool_name=tc.name,

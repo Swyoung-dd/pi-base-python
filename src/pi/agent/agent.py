@@ -220,6 +220,7 @@ class Agent:
                     context_token_limit=self._context_token_limit,
                     compact_to_tokens=self._compact_to_tokens,
                 ),
+                tool_execution=self._tool_execution,
             )
             self._state.messages = previous_messages + new_messages
             if self._session_storage is not None:
