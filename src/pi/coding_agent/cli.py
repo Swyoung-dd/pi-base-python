@@ -23,6 +23,7 @@ from pi.ai.providers.registry import get_provider
 from pi.ai.types import ModelThinkingLevel
 from pi.coding_agent.config import load_config
 from pi.coding_agent.extensions import load_extensions
+from pi.coding_agent.file_references import expand_file_references
 from pi.coding_agent.output import PrintRenderer
 from pi.coding_agent.sessions import list_sessions, resolve_session_id, session_path
 from pi.coding_agent.skills import format_skills_for_prompt, load_skills
@@ -126,7 +127,7 @@ async def run_print_mode(prompt: str, config, output_format: str = "text") -> No
     )
     agent.subscribe(PrintRenderer(output_format))
 
-    await agent.prompt(prompt)
+    await agent.prompt(expand_file_references(prompt, cwd))
 
 
 async def run_interactive_mode(
@@ -161,6 +162,7 @@ async def run_interactive_mode(
         thinking_level=ModelThinkingLevel(config.thinking_level),
         commands=commands,
         skills=skills,
+        cwd=cwd,
     )
     await session.run()
 

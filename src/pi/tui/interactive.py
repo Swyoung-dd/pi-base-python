@@ -22,6 +22,7 @@ from pi.agent.session.jsonl import JsonlStorage
 from pi.agent.types import AgentEvent, AgentTool
 from pi.ai.types import Model, ModelThinkingLevel
 from pi.coding_agent.extensions import ExtensionCommand
+from pi.coding_agent.file_references import expand_file_references
 from pi.coding_agent.sessions import list_sessions, new_session_id, session_path
 from pi.coding_agent.skills import Skill
 
@@ -41,6 +42,7 @@ class InteractiveSession:
         thinking_level: ModelThinkingLevel = ModelThinkingLevel.OFF,
         commands: dict[str, ExtensionCommand] | None = None,
         skills: list[Skill] | None = None,
+        cwd: Path | None = None,
     ) -> None:
         self._console = Console()
         self._agent = Agent(
@@ -61,6 +63,7 @@ class InteractiveSession:
         self._sessions_dir = sessions_dir
         self._commands = commands or {}
         self._skills = {skill.name: skill for skill in skills or []}
+        self._cwd = (cwd or Path.cwd()).resolve()
 
     def _update_live(self) -> None:
         if self._live is None:
@@ -220,7 +223,7 @@ class InteractiveSession:
                 if handled:
                     continue
 
-                await self._agent.prompt(prompt)
+                await self._agent.prompt(expand_file_references(prompt, self._cwd))
                 self._console.print()
             except (KeyboardInterrupt, EOFError):
                 self._console.print("\n[dim]Goodbye.[/dim]")
