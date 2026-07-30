@@ -36,6 +36,7 @@ from pi.agent.types import (
     AgentToolResultMessage,
     AgentUserMessage,
     ContextCompactedEvent,
+    ContextCompactionRequest,
     MessageEndEvent,
     MessageStartEvent,
     ProviderRetryEvent,
@@ -394,6 +395,40 @@ async def run_agent_loop(
             )
             all_messages.append(tr_msg)
             new_messages.append(tr_msg)
+
+        compaction_requests = [
+            result.details
+            for result in tool_results
+            if isinstance(result.details, ContextCompactionRequest)
+        ]
+        if compaction_requests:
+            estimated_tokens = estimate_context_tokens_with_overhead(
+                all_messages,
+                context.system_prompt,
+                context.tools,
+            )
+            requested_target = compaction_requests[-1].target_tokens
+            if requested_target is None:
+                if options and options.compact_to_tokens:
+                    requested_target = options.compact_to_tokens
+                elif options and options.context_token_limit:
+                    requested_target = options.context_token_limit * 3 // 4
+                else:
+                    requested_target = max(1, estimated_tokens * 3 // 4)
+            compacted = (
+                await compact_fn(all_messages, requested_target, estimated_tokens)
+                if compact_fn
+                else compact_messages(all_messages, requested_target, estimated_tokens)
+            )
+            all_messages = compacted.messages
+            compactions.append(compacted)
+            await sink(
+                ContextCompactedEvent(
+                    original_tokens=compacted.original_tokens,
+                    compacted_tokens=compacted.compacted_tokens,
+                    dropped_messages=compacted.dropped_messages,
+                )
+            )
 
         await sink(TurnEndEvent(message=agent_msg, tool_results=tool_results))
         steering = get_steering_messages() if get_steering_messages else []

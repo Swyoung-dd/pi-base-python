@@ -136,7 +136,7 @@ class Agent:
         if not any(t.name == "compact" for t in tools):
             from pi.coding_agent.tools.compact import create_compact_tool
 
-            tools.append(create_compact_tool(lambda: self))
+            tools.append(create_compact_tool())
         self._state = AgentState(
             system_prompt=options.system_prompt,
             model=options.model,

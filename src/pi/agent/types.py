@@ -120,6 +120,13 @@ class AgentToolResult:
     is_error: bool = False
 
 
+@dataclass(frozen=True)
+class ContextCompactionRequest:
+    """工具请求 agent loop 在下一次模型调用前压缩上下文。"""
+
+    target_tokens: int | None = None
+
+
 # ---- Agent 状态 ----
 
 

@@ -11,9 +11,9 @@ from pi.agent.compaction import (
     prepare_compaction,
 )
 from pi.agent.session import JsonlStorage
-from pi.agent.types import AgentAssistantMessage, create_user_message
+from pi.agent.types import AgentAssistantMessage, AgentToolResultMessage, create_user_message
 from pi.ai.streaming import DoneEvent, EventStream
-from pi.ai.types import AssistantMessage, Model, StopReason, TextContent, Usage
+from pi.ai.types import AssistantMessage, Model, StopReason, TextContent, ToolCall, Usage
 
 
 def _assistant(text: str, timestamp: int) -> AgentAssistantMessage:
@@ -200,3 +200,69 @@ async def test_agent_proactive_compact():
         assert result.messages[0].content.startswith("[已压缩的早期对话]")
         assert len(agent.state.messages) < 12
         assert (await storage.get_branch())[-1].type == "compaction"
+
+
+async def test_compact_tool_requests_compaction_inside_agent_loop():
+    model = Model(id="test-model", name="Test", api="test", provider="test")
+    main_contexts = []
+    event_types: list[str] = []
+    main_call_count = 0
+
+    async def stream_fn(current_model, context, options):
+        nonlocal main_call_count
+        stream = EventStream()
+        if context.system_prompt.startswith("你负责压缩编码 agent"):
+            content = [TextContent(text="tool generated summary")]
+        else:
+            main_contexts.append(context)
+            main_call_count += 1
+            content = (
+                [ToolCall(id="compact-1", name="compact", arguments={"target_tokens": 80})]
+                if main_call_count == 1
+                else [TextContent(text="done")]
+            )
+        response = AssistantMessage(
+            content=content,
+            api=current_model.api,
+            provider=current_model.provider,
+            model=current_model.id,
+            stop_reason=StopReason.STOP,
+            timestamp=99,
+        )
+        await stream.push(DoneEvent(message=response))
+        await stream.end(response)
+        return stream
+
+    async def listener(event):
+        event_types.append(event.type)
+
+    agent = Agent(
+        AgentOptions(
+            model=model,
+            stream_fn=stream_fn,
+            context_token_limit=10_000,
+        )
+    )
+    for index in range(6):
+        agent.state.messages.extend(
+            [
+                create_user_message(f"old-{index} " + "x" * 80),
+                _assistant(f"reply-{index} " + "y" * 80, index),
+            ]
+        )
+    agent.subscribe(listener)
+
+    await agent.prompt("compact now")
+
+    assert len(main_contexts) == 2
+    assert main_contexts[1].messages[0].content.startswith(
+        "[已压缩的早期对话]\ntool generated summary"
+    )
+    assert "context_compacted" in event_types
+    tool_results = [
+        message
+        for message in agent.state.messages
+        if isinstance(message, AgentToolResultMessage)
+    ]
+    assert tool_results
+    assert not tool_results[-1].is_error
