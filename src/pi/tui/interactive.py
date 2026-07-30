@@ -14,7 +14,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import click
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.completion import WordCompleter
@@ -22,6 +21,7 @@ from prompt_toolkit.history import FileHistory, InMemoryHistory
 from prompt_toolkit.input import DummyInput
 from prompt_toolkit.output import DummyOutput
 from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.styles import Style
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
@@ -49,6 +49,16 @@ from pi.coding_agent.sessions import (
 )
 from pi.coding_agent.skills import Skill
 from pi.coding_agent.themes import Theme
+from pi.tui.selector import select_option
+
+_PROMPT_STYLE = Style.from_dict(
+    {
+        "frame.border": "#3b82f6",
+        "input.prompt": "bold #60a5fa",
+        "input.placeholder": "#6b7280",
+        "bottom-toolbar": "bg:#1f2937 #d1d5db",
+    }
+)
 
 
 def _format_tokens(tokens: int) -> str:
@@ -214,10 +224,14 @@ class InteractiveSession:
         history = _SafeFileHistory(str(history_file)) if history_file else _SafeInMemoryHistory()
         interactive_terminal = sys.stdin.isatty() and sys.stdout.isatty()
         self._prompt_session: PromptSession[str] = PromptSession(
+            message=[("class:input.prompt", " > ")],
             history=history,
             auto_suggest=AutoSuggestFromHistory(),
             completer=WordCompleter(sorted(command_names), sentence=True),
             complete_while_typing=False,
+            placeholder=[("class:input.placeholder", "Type a message or /command")],
+            show_frame=True,
+            style=_PROMPT_STYLE,
             input=None if interactive_terminal else DummyInput(),
             output=None if interactive_terminal else DummyOutput(),
         )
@@ -331,20 +345,23 @@ class InteractiveSession:
                 )
                 return True, False
             if not argument:
-                levels = " ".join(level.value for level in ModelThinkingLevel)
-                self._console.print(
-                    f"Thinking: {self._agent.thinking_level.value}\nAvailable: {levels}",
-                    style=self._theme.muted,
+                level = await select_option(
+                    "Thinking level",
+                    [(candidate, candidate.value) for candidate in ModelThinkingLevel],
+                    default=self._agent.thinking_level,
                 )
-                return True, False
-            try:
-                level = ModelThinkingLevel(argument.lower())
-            except ValueError:
-                self._console.print(
-                    f"Invalid thinking level: {argument}",
-                    style=self._theme.error,
-                )
-                return True, False
+                if level is None:
+                    self._console.print("Thinking selection cancelled.", style=self._theme.muted)
+                    return True, False
+            else:
+                try:
+                    level = ModelThinkingLevel(argument.lower())
+                except ValueError:
+                    self._console.print(
+                        f"Invalid thinking level: {argument}",
+                        style=self._theme.error,
+                    )
+                    return True, False
             try:
                 self._agent.set_thinking_level(level)
             except RuntimeError as exc:
@@ -410,25 +427,22 @@ class InteractiveSession:
                 selected = matches[0]
             else:
                 current = self._agent.state.model
-                for index, model in enumerate(models, start=1):
-                    marker = (
-                        "*"
-                        if current and (model.provider, model.id) == (current.provider, current.id)
-                        else " "
+                model_options = []
+                for model in models:
+                    is_current = current and (model.provider, model.id) == (
+                        current.provider,
+                        current.id,
                     )
-                    self._console.print(
-                        f"{index:>2}. {marker} {model.provider}/{model.id}",
-                        style=self._theme.muted,
-                    )
-                try:
-                    selected_index = click.prompt(
-                        "Select model",
-                        type=click.IntRange(1, len(models)),
-                    )
-                except (click.Abort, EOFError):
+                    suffix = "  current" if is_current else ""
+                    model_options.append((model, f"{model.provider}/{model.id}{suffix}"))
+                selected = await select_option(
+                    "Select model",
+                    model_options,
+                    default=current,
+                )
+                if selected is None:
                     self._console.print("Model selection cancelled.", style=self._theme.muted)
                     return True, False
-                selected = models[selected_index - 1]
 
             if not await ensure_model_auth(selected, self._credential_store):
                 return True, False
@@ -731,7 +745,6 @@ class InteractiveSession:
                 try:
                     with patch_stdout(raw=True):
                         prompt = await self._prompt_session.prompt_async(
-                            ">>> ",
                             bottom_toolbar=self._bottom_toolbar,
                         )
                     if not prompt.strip():

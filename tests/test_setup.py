@@ -15,13 +15,13 @@ async def test_setup_selects_model_api_key_and_persists_both(tmp_path, monkeypat
     )
     models = list_models()
     selected = next(model for model in models if model.provider == "deepseek")
-    selected_index = models.index(selected) + 1
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("PIY_API_KEY_DEEPSEEK", raising=False)
-    monkeypatch.setattr(
-        "pi.coding_agent.setup.click.prompt",
-        lambda message, **kwargs: selected_index if message == "Select model" else "high",
-    )
+
+    async def choose(title, options, **kwargs):
+        return selected if title == "Select model" else "high"
+
+    monkeypatch.setattr("pi.coding_agent.setup.select_option", choose)
 
     async def prompt_api_key(message):
         return "setup-key"

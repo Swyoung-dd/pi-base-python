@@ -9,6 +9,7 @@ from pi.ai.oauth import CredentialStore
 from pi.ai.types import ModelThinkingLevel
 from pi.coding_agent.config import Config, save_config
 from pi.coding_agent.model_auth import ensure_model_auth
+from pi.tui.selector import select_option
 
 
 async def run_setup(
@@ -19,16 +20,21 @@ async def run_setup(
     models = list_models()
     if not models:
         raise click.ClickException("No models are available")
-    click.echo("Available models:")
-    for index, model in enumerate(models, start=1):
-        reasoning = " reasoning" if model.reasoning else ""
-        click.echo(f"  {index:>2}. {model.provider}/{model.id}{reasoning}")
-    selected = click.prompt(
+    model = await select_option(
         "Select model",
-        type=click.IntRange(1, len(models)),
-        default=1,
+        [
+            (
+                candidate,
+                f"{candidate.provider}/{candidate.id}"
+                f"{'  reasoning' if candidate.reasoning else ''}",
+            )
+            for candidate in models
+        ],
+        default=models[0],
     )
-    model = models[selected - 1]
+    if model is None:
+        click.echo("Setup cancelled.")
+        return config
     if not await ensure_model_auth(model, credential_store):
         return config
     config.model = model.id
@@ -40,11 +46,15 @@ async def run_setup(
             if config.thinking_level in levels and config.thinking_level != "off"
             else ModelThinkingLevel.MEDIUM.value
         )
-        config.thinking_level = click.prompt(
+        thinking_level = await select_option(
             "Thinking level",
-            type=click.Choice(levels),
             default=default_level,
+            options=[(level, level) for level in levels],
         )
+        if thinking_level is None:
+            click.echo("Setup cancelled.")
+            return config
+        config.thinking_level = thinking_level
     else:
         config.thinking_level = ModelThinkingLevel.OFF.value
     save_config(config)

@@ -16,7 +16,7 @@ from pi.agent.types import (
 )
 from pi.ai.models import list_models
 from pi.ai.oauth import CredentialStore, resolve_stored_api_key, save_api_key
-from pi.ai.types import TextContent, ToolCall, Usage
+from pi.ai.types import ModelThinkingLevel, TextContent, ToolCall, Usage
 from pi.coding_agent.extensions import ExtensionContext
 from pi.coding_agent.prompt_templates import PromptTemplate
 from pi.coding_agent.themes import Theme
@@ -79,6 +79,28 @@ async def test_thinking_command_updates_toolbar_and_persists_selection(tmp_path)
     assert session._agent.thinking_level.value == "high"
     assert "thinking high" in session._bottom_toolbar()
     assert [level.value for level in selected_levels] == ["high"]
+
+
+async def test_thinking_command_uses_keyboard_selector(tmp_path, monkeypatch):
+    model = next(candidate for candidate in list_models() if candidate.reasoning)
+
+    async def choose(title, options, **kwargs):
+        assert title == "Thinking level"
+        return ModelThinkingLevel.HIGH
+
+    monkeypatch.setattr("pi.tui.interactive.select_option", choose)
+    session = InteractiveSession(
+        model=model,
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        history_file=tmp_path / "history",
+    )
+
+    handled, should_exit = await session._handle_command("/thinking")
+
+    assert handled and not should_exit
+    assert session._agent.thinking_level is ModelThinkingLevel.HIGH
 
 
 async def test_model_command_is_restored_from_session(tmp_path, monkeypatch):
@@ -247,13 +269,14 @@ def test_extension_commands_cannot_shadow_builtin_commands(tmp_path):
 async def test_model_command_selects_model_and_prompts_for_api_key(tmp_path, monkeypatch):
     models = list_models()
     selected_model = next(model for model in models if model.provider == "deepseek")
-    selected_index = models.index(selected_model) + 1
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("PIY_API_KEY_DEEPSEEK", raising=False)
-    monkeypatch.setattr(
-        "pi.tui.interactive.click.prompt",
-        lambda *args, **kwargs: selected_index,
-    )
+
+    async def choose(title, options, **kwargs):
+        assert title == "Select model"
+        return selected_model
+
+    monkeypatch.setattr("pi.tui.interactive.select_option", choose)
     prompt_messages = []
 
     async def prompt_api_key(message):
@@ -277,6 +300,19 @@ async def test_model_command_selects_model_and_prompts_for_api_key(tmp_path, mon
     assert f"deepseek/{selected_model.id}" in session._bottom_toolbar()
     assert await resolve_stored_api_key("deepseek", store) == "deepseek-secret"
     assert prompt_messages == ["deepseek API key: "]
+
+
+def test_prompt_uses_framed_input_and_placeholder(tmp_path):
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        history_file=tmp_path / "history",
+    )
+
+    assert session._prompt_session.show_frame is True
+    assert session._prompt_session.placeholder
 
 
 def test_file_history_does_not_store_likely_api_keys(tmp_path):
