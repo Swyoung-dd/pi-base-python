@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import Any
@@ -64,10 +65,14 @@ class OpenAIProvider(BaseProvider):
                         if hasattr(block, "text"):
                             parts.append({"type": "text", "text": block.text})
                         elif hasattr(block, "data"):
-                            parts.append({
-                                "type": "image_url",
-                                "image_url": {"url": f"data:{block.mime_type};base64,{block.data}"},
-                            })
+                            parts.append(
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:{block.mime_type};base64,{block.data}"
+                                    },
+                                }
+                            )
                     messages.append({"role": "user", "content": parts})
             elif isinstance(msg, AssistantMessage):
                 # 重建带工具调用的助手消息
@@ -77,14 +82,16 @@ class OpenAIProvider(BaseProvider):
                     if isinstance(block, TextContent):
                         content_parts.append(block.text)
                     elif isinstance(block, ToolCall):
-                        tool_calls.append({
-                            "id": block.id,
-                            "type": "function",
-                            "function": {
-                                "name": block.name,
-                                "arguments": json.dumps(block.arguments),
-                            },
-                        })
+                        tool_calls.append(
+                            {
+                                "id": block.id,
+                                "type": "function",
+                                "function": {
+                                    "name": block.name,
+                                    "arguments": json.dumps(block.arguments),
+                                },
+                            }
+                        )
                 entry: dict[str, Any] = {"role": "assistant"}
                 if content_parts:
                     entry["content"] = "".join(content_parts)
@@ -94,14 +101,14 @@ class OpenAIProvider(BaseProvider):
                     entry["tool_calls"] = tool_calls
                 messages.append(entry)
             elif isinstance(msg, ToolResultMessage):
-                text = "".join(
-                    b.text for b in msg.content if hasattr(b, "text")
+                text = "".join(b.text for b in msg.content if hasattr(b, "text"))
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": msg.tool_call_id,
+                        "content": text,
+                    }
                 )
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": msg.tool_call_id,
-                    "content": text,
-                })
         return messages
 
     def convert_tools(self, context: Context) -> list[dict[str, Any]] | None:
@@ -150,10 +157,8 @@ class OpenAIProvider(BaseProvider):
             if options.max_tokens is not None:
                 payload["max_tokens"] = options.max_tokens
 
-        asyncio_task = _stream_openai(url, headers, payload, model, stream_obj)
-        # 即发即忘 — EventStream 由调用者消费。
-        import asyncio
-        asyncio.create_task(asyncio_task)
+        task = asyncio.create_task(_stream_openai(url, headers, payload, model, stream_obj))
+        stream_obj.set_producer_task(task)
         return stream_obj
 
     async def _emit_error(self, stream_obj: EventStream, model: Model, msg: str) -> None:
@@ -204,54 +209,58 @@ async def _stream_openai(
                 body = await resp.aread()
                 raise RuntimeError(f"OpenAI API error {resp.status_code}: {body.decode()}")
 
-                async for line in resp.aiter_lines():
-                    line = line.strip()
-                    if not line or not line.startswith("data: "):
-                        continue
-                    data = line[6:]
-                    if data == "[DONE]":
-                        break
-                    chunk = json.loads(data)
-                    choices = chunk.get("choices", [])
-                    if chunk.get("usage"):
-                        u = chunk["usage"]
-                        usage.input = u.get("prompt_tokens", 0)
-                        usage.output = u.get("completion_tokens", 0)
-                        usage.total_tokens = u.get("total_tokens", 0)
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta", {})
-                    finish = choices[0].get("finish_reason")
+            async for line in resp.aiter_lines():
+                line = line.strip()
+                if not line or not line.startswith("data: "):
+                    continue
+                data = line[6:]
+                if data == "[DONE]":
+                    break
+                chunk = json.loads(data)
+                choices = chunk.get("choices", [])
+                if chunk.get("usage"):
+                    u = chunk["usage"]
+                    usage.input = u.get("prompt_tokens", 0)
+                    usage.output = u.get("completion_tokens", 0)
+                    usage.total_tokens = u.get("total_tokens", 0)
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {})
+                finish = choices[0].get("finish_reason")
 
-                    if "content" in delta and delta["content"]:
-                        text_parts.append(delta["content"])
-                        await stream_obj.push(TextDeltaEvent(
+                if "content" in delta and delta["content"]:
+                    text_parts.append(delta["content"])
+                    await stream_obj.push(
+                        TextDeltaEvent(
                             content_index=0,
                             delta=delta["content"],
-                        ))
+                        )
+                    )
 
-                    if "tool_calls" in delta:
-                        for tc in delta["tool_calls"]:
-                            idx = tc.get("index", 0)
-                            if idx not in tool_buffers:
-                                tool_buffers[idx] = {"id": "", "name": "", "args": ""}
-                            if tc.get("id"):
-                                tool_buffers[idx]["id"] = tc["id"]
-                            fn = tc.get("function", {})
-                            if fn.get("name"):
-                                tool_buffers[idx]["name"] = fn["name"]
-                            if fn.get("arguments"):
-                                tool_buffers[idx]["args"] += fn["arguments"]
-                                await stream_obj.push(ToolCallDeltaEvent(
+                if "tool_calls" in delta:
+                    for tc in delta["tool_calls"]:
+                        idx = tc.get("index", 0)
+                        if idx not in tool_buffers:
+                            tool_buffers[idx] = {"id": "", "name": "", "args": ""}
+                        if tc.get("id"):
+                            tool_buffers[idx]["id"] = tc["id"]
+                        fn = tc.get("function", {})
+                        if fn.get("name"):
+                            tool_buffers[idx]["name"] = fn["name"]
+                        if fn.get("arguments"):
+                            tool_buffers[idx]["args"] += fn["arguments"]
+                            await stream_obj.push(
+                                ToolCallDeltaEvent(
                                     content_index=idx,
                                     delta=fn["arguments"],
-                                ))
+                                )
+                            )
 
-                    if finish:
-                        if finish == "tool_calls":
-                            stop_reason = StopReason.TOOL_USE
-                        elif finish == "length":
-                            stop_reason = StopReason.LENGTH
+                if finish:
+                    if finish == "tool_calls":
+                        stop_reason = StopReason.TOOL_USE
+                    elif finish == "length":
+                        stop_reason = StopReason.LENGTH
 
         # 构建最终内容块
         final_blocks: list[Any] = []
@@ -279,8 +288,10 @@ async def _stream_openai(
             stop_reason=stop_reason,
             timestamp=int(time.time() * 1000),
         )
-        reason = "toolUse" if stop_reason == StopReason.TOOL_USE else (
-            "length" if stop_reason == StopReason.LENGTH else "stop"
+        reason = (
+            "toolUse"
+            if stop_reason == StopReason.TOOL_USE
+            else ("length" if stop_reason == StopReason.LENGTH else "stop")
         )
         await stream_obj.push(DoneEvent(reason=reason, message=final_msg))
         await stream_obj.end(final_msg)

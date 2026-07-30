@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -49,6 +50,7 @@ class Transport(StrEnum):
 
 # ---- 内容块 ----
 
+
 class TextContent(BaseModel):
     type: Literal["text"] = "text"
     text: str
@@ -70,8 +72,10 @@ class ImageContent(BaseModel):
 
 # ---- 工具定义 ----
 
+
 class ToolParameterSchema(BaseModel):
     """工具参数的 JSON Schema。"""
+
     type: str = "object"
     properties: dict[str, Any] = Field(default_factory=dict)
     required: list[str] = Field(default_factory=list)
@@ -94,6 +98,7 @@ class ToolCall(BaseModel):
 
 # ---- 用量 ----
 
+
 class UsageCost(BaseModel):
     input: float = 0.0
     output: float = 0.0
@@ -113,6 +118,7 @@ class Usage(BaseModel):
 
 
 # ---- 消息 ----
+
 
 class UserMessage(BaseModel):
     role: Literal["user"] = "user"
@@ -151,6 +157,7 @@ Message = UserMessage | AssistantMessage | ToolResultMessage
 
 # ---- 模型 ----
 
+
 class ModelCost(BaseModel):
     input: float = 0.0  # 美元/百万 token
     output: float = 0.0
@@ -174,6 +181,7 @@ class Model(BaseModel):
 
 # ---- 上下文（传递给提供商） ----
 
+
 class Context(BaseModel):
     system_prompt: str | None = None
     messages: list[Message] = Field(default_factory=list)
@@ -181,6 +189,7 @@ class Context(BaseModel):
 
 
 # ---- 流式选项 ----
+
 
 class StreamOptions(BaseModel):
     temperature: float | None = None
@@ -190,4 +199,5 @@ class StreamOptions(BaseModel):
     timeout_ms: int | None = None
     max_retries: int | None = None
     headers: dict[str, str | None] | None = None
+    abort_event: asyncio.Event | None = None
     model_config = {"arbitrary_types_allowed": True}

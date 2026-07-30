@@ -13,6 +13,7 @@ stream boundary.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
@@ -52,35 +53,72 @@ from pi.ai.types import (
 )
 
 
+async def _next_stream_event(
+    stream: EventStream,
+    iterator: Any,
+    abort_event: asyncio.Event | None,
+) -> tuple[Any | None, bool]:
+    """读取下一个流事件，并在收到取消信号时终止生产者任务。"""
+    if abort_event is None:
+        try:
+            return await anext(iterator), False
+        except StopAsyncIteration:
+            return None, False
+
+    next_task = asyncio.create_task(anext(iterator))
+    abort_task = asyncio.create_task(abort_event.wait())
+    done, pending = await asyncio.wait(
+        {next_task, abort_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    for task in pending:
+        task.cancel()
+    await asyncio.gather(*pending, return_exceptions=True)
+
+    if abort_task in done:
+        await stream.cancel()
+        return None, True
+    try:
+        return next_task.result(), False
+    except StopAsyncIteration:
+        return None, False
+
+
 def convert_to_llm(messages: list[AgentMessage]) -> list[Message]:
     """Convert agent messages to LLM messages for the provider call."""
     result: list[Message] = []
     for msg in messages:
         if isinstance(msg, AgentUserMessage):
-            result.append(AiUserMessage(
-                content=msg.content if isinstance(msg.content, str) else msg.content,
-                timestamp=msg.timestamp,
-            ))
+            result.append(
+                AiUserMessage(
+                    content=msg.content if isinstance(msg.content, str) else msg.content,
+                    timestamp=msg.timestamp,
+                )
+            )
         elif isinstance(msg, AgentAssistantMessage):
-            result.append(AssistantMessage(
-                content=msg.content,
-                api=msg.api,
-                provider=msg.provider,
-                model=msg.model,
-                usage=msg.usage,
-                stop_reason=StopReason(msg.stop_reason) if msg.stop_reason else StopReason.STOP,
-                error_message=msg.error_message,
-                timestamp=msg.timestamp,
-            ))
+            result.append(
+                AssistantMessage(
+                    content=msg.content,
+                    api=msg.api,
+                    provider=msg.provider,
+                    model=msg.model,
+                    usage=msg.usage,
+                    stop_reason=StopReason(msg.stop_reason) if msg.stop_reason else StopReason.STOP,
+                    error_message=msg.error_message,
+                    timestamp=msg.timestamp,
+                )
+            )
         elif isinstance(msg, AgentToolResultMessage):
-            result.append(AiToolResultMessage(
-                tool_call_id=msg.tool_call_id,
-                tool_name=msg.tool_name,
-                content=msg.content,
-                details=msg.details,
-                is_error=msg.is_error,
-                timestamp=msg.timestamp,
-            ))
+            result.append(
+                AiToolResultMessage(
+                    tool_call_id=msg.tool_call_id,
+                    tool_name=msg.tool_name,
+                    content=msg.content,
+                    details=msg.details,
+                    is_error=msg.is_error,
+                    timestamp=msg.timestamp,
+                )
+            )
     return result
 
 
@@ -122,7 +160,7 @@ async def run_agent_loop(
 
         stream: EventStream = await stream_fn(model, llm_context, options)
 
-        # 发射 message_start，使用空 partial
+        # 先发出空消息，后续增量事件会持续更新它。
         partial_msg = AgentAssistantMessage(
             content=[],
             api=model.api,
@@ -132,19 +170,40 @@ async def run_agent_loop(
         )
         await sink(MessageStartEvent(message=partial_msg))
 
-        # 流式消费：透传 text_delta / thinking_delta 事件给 UI 层
         final_assistant: AssistantMessage | None = None
-        async for event in stream:
+        partial_text: list[str] = []
+        iterator = stream.__aiter__()
+        while True:
+            abort_event = options.abort_event if options else None
+            event, aborted = await _next_stream_event(stream, iterator, abort_event)
+            if aborted:
+                final_assistant = AssistantMessage(
+                    content=[TextContent(text="".join(partial_text))],
+                    api=model.api,
+                    provider=model.provider,
+                    model=model.id,
+                    stop_reason=StopReason.ABORTED,
+                    error_message="Request aborted",
+                    timestamp=int(time.time() * 1000),
+                )
+                break
+            if event is None:
+                break
             if event.type == "text_delta":
-                await sink(TextDeltaUpdateEvent(
-                    delta=event.delta,
-                    content_index=event.content_index,
-                ))
+                partial_text.append(event.delta)
+                await sink(
+                    TextDeltaUpdateEvent(
+                        delta=event.delta,
+                        content_index=event.content_index,
+                    )
+                )
             elif event.type == "thinking_delta":
-                await sink(ThinkingDeltaUpdateEvent(
-                    delta=event.delta,
-                    content_index=event.content_index,
-                ))
+                await sink(
+                    ThinkingDeltaUpdateEvent(
+                        delta=event.delta,
+                        content_index=event.content_index,
+                    )
+                )
             if event.type in ("done", "error"):
                 final_assistant = event.message if event.type == "done" else event.error
 
@@ -163,7 +222,6 @@ async def run_agent_loop(
             timestamp=final_assistant.timestamp or int(time.time() * 1000),
         )
 
-        await sink(MessageStartEvent(message=agent_msg))
         await sink(MessageEndEvent(message=agent_msg))
         all_messages.append(agent_msg)
         new_messages.append(agent_msg)
@@ -172,9 +230,7 @@ async def run_agent_loop(
             await sink(TurnEndEvent(message=agent_msg, tool_results=[]))
             break
 
-        tool_calls = [
-            block for block in agent_msg.content if isinstance(block, ToolCall)
-        ]
+        tool_calls = [block for block in agent_msg.content if isinstance(block, ToolCall)]
 
         if not tool_calls:
             await sink(TurnEndEvent(message=agent_msg, tool_results=[]))
@@ -182,10 +238,12 @@ async def run_agent_loop(
 
         tool_results: list[AgentToolResult] = []
         for tc in tool_calls:
-            await sink(ToolExecutionStartEvent(
-                tool_call_id=tc.id,
-                tool_name=tc.name,
-            ))
+            await sink(
+                ToolExecutionStartEvent(
+                    tool_call_id=tc.id,
+                    tool_name=tc.name,
+                )
+            )
 
             tool = tools_map.get(tc.name)
             if tool is None:
@@ -208,11 +266,13 @@ async def run_agent_loop(
                     )
 
             tool_results.append(result)
-            await sink(ToolExecutionEndEvent(
-                tool_call_id=tc.id,
-                tool_name=tc.name,
-                result=result,
-            ))
+            await sink(
+                ToolExecutionEndEvent(
+                    tool_call_id=tc.id,
+                    tool_name=tc.name,
+                    result=result,
+                )
+            )
 
             tr_msg = AgentToolResultMessage(
                 tool_call_id=tc.id,

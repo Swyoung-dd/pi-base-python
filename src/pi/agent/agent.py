@@ -47,6 +47,7 @@ AgentListener = Callable[[AgentEvent], Coroutine[Any, Any, None]]
 @dataclass
 class AgentOptions:
     """Options for constructing an Agent."""
+
     model: Model | None = None
     system_prompt: str = ""
     tools: list[AgentTool] = field(default_factory=list)
@@ -157,6 +158,7 @@ class Agent:
         self._abort_event.clear()
         self._idle_event.clear()
         self._state.is_streaming = True
+        previous_messages = self._state.messages[:]
         self._state.messages.extend(messages)
 
         try:
@@ -164,7 +166,7 @@ class Agent:
                 prompts=messages,
                 context=AgentContext(
                     system_prompt=self._state.system_prompt,
-                    messages=self._state.messages[:],
+                    messages=previous_messages,
                     tools=self._state.tools[:],
                 ),
                 model=self._state.model,
@@ -172,6 +174,7 @@ class Agent:
                 sink=self._process_event,
                 options=StreamOptions(
                     session_id=self._session_id,
+                    abort_event=self._abort_event,
                 ),
             )
         except Exception as exc:
@@ -201,19 +204,14 @@ class Agent:
         elif event.type == "text_delta":
             # 流式文本增量：更新 streaming_message 的内容
             if self._state.streaming_message is not None:
-                from pi.ai.types import TextContent
                 if self._state.streaming_message.content:
                     last = self._state.streaming_message.content[-1]
                     if hasattr(last, "text"):
                         last.text += event.delta
                     else:
-                        self._state.streaming_message.content.append(
-                            TextContent(text=event.delta)
-                        )
+                        self._state.streaming_message.content.append(TextContent(text=event.delta))
                 else:
-                    self._state.streaming_message.content.append(
-                        TextContent(text=event.delta)
-                    )
+                    self._state.streaming_message.content.append(TextContent(text=event.delta))
         elif event.type == "message_end":
             self._state.streaming_message = None
             self._state.messages.append(event.message)

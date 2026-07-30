@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import Any
@@ -62,14 +63,16 @@ class AnthropicProvider(BaseProvider):
                         if hasattr(block, "text"):
                             blocks.append({"type": "text", "text": block.text})
                         elif hasattr(block, "data"):
-                            blocks.append({
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": block.mime_type,
-                                    "data": block.data,
-                                },
-                            })
+                            blocks.append(
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": block.mime_type,
+                                        "data": block.data,
+                                    },
+                                }
+                            )
                     messages.append({"role": "user", "content": blocks})
             elif isinstance(msg, AssistantMessage):
                 blocks: list[dict[str, Any]] = []
@@ -77,24 +80,30 @@ class AnthropicProvider(BaseProvider):
                     if isinstance(block, TextContent):
                         blocks.append({"type": "text", "text": block.text})
                     elif isinstance(block, ToolCall):
-                        blocks.append({
-                            "type": "tool_use",
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.arguments,
-                        })
+                        blocks.append(
+                            {
+                                "type": "tool_use",
+                                "id": block.id,
+                                "name": block.name,
+                                "input": block.arguments,
+                            }
+                        )
                 messages.append({"role": "assistant", "content": blocks})
             elif isinstance(msg, ToolResultMessage):
                 text = "".join(b.text for b in msg.content if hasattr(b, "text"))
-                messages.append({
-                    "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": msg.tool_call_id,
-                        "content": text,
-                        "is_error": msg.is_error,
-                    }],
-                })
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": msg.tool_call_id,
+                                "content": text,
+                                "is_error": msg.is_error,
+                            }
+                        ],
+                    }
+                )
         return messages
 
     def convert_tools(self, context: Context) -> list[dict[str, Any]] | None:
@@ -139,8 +148,8 @@ class AnthropicProvider(BaseProvider):
         if options and options.temperature is not None:
             payload["temperature"] = options.temperature
 
-        import asyncio
-        asyncio.create_task(_stream_anthropic(url, headers, payload, model, stream_obj))
+        task = asyncio.create_task(_stream_anthropic(url, headers, payload, model, stream_obj))
+        stream_obj.set_producer_task(task)
         return stream_obj
 
     async def _emit_error(self, stream_obj: EventStream, model: Model, msg: str) -> None:
@@ -190,57 +199,61 @@ async def _stream_anthropic(
                 body = await resp.aread()
                 raise RuntimeError(f"Anthropic API error {resp.status_code}: {body.decode()}")
 
-                async for line in resp.aiter_lines():
-                    line = line.strip()
-                    if not line or not line.startswith("data: "):
-                        continue
-                    data = json.loads(line[6:])
-                    event_type = data.get("type", "")
+            async for line in resp.aiter_lines():
+                line = line.strip()
+                if not line or not line.startswith("data: "):
+                    continue
+                data = json.loads(line[6:])
+                event_type = data.get("type", "")
 
-                    if event_type == "content_block_start":
-                        block = data.get("content_block", {})
-                        if block.get("type") == "tool_use":
-                            current_tool = {
-                                "id": block.get("id", ""),
-                                "name": block.get("name", ""),
-                                "args": "",
-                            }
-                    elif event_type == "content_block_delta":
-                        delta = data.get("delta", {})
-                        if delta.get("type") == "text_delta":
-                            text_parts.append(delta["text"])
-                            await stream_obj.push(TextDeltaEvent(
+                if event_type == "content_block_start":
+                    block = data.get("content_block", {})
+                    if block.get("type") == "tool_use":
+                        current_tool = {
+                            "id": block.get("id", ""),
+                            "name": block.get("name", ""),
+                            "args": "",
+                        }
+                elif event_type == "content_block_delta":
+                    delta = data.get("delta", {})
+                    if delta.get("type") == "text_delta":
+                        text_parts.append(delta["text"])
+                        await stream_obj.push(
+                            TextDeltaEvent(
                                 content_index=0,
                                 delta=delta["text"],
-                            ))
-                        elif delta.get("type") == "input_json_delta":
-                            if current_tool is not None:
-                                current_tool["args"] += delta.get("partial_json", "")
-                                await stream_obj.push(ToolCallDeltaEvent(
+                            )
+                        )
+                    elif delta.get("type") == "input_json_delta":
+                        if current_tool is not None:
+                            current_tool["args"] += delta.get("partial_json", "")
+                            await stream_obj.push(
+                                ToolCallDeltaEvent(
                                     content_index=len(tool_calls),
                                     delta=delta.get("partial_json", ""),
-                                ))
-                    elif event_type == "content_block_stop":
-                        if current_tool is not None:
-                            tool_calls.append(current_tool)
-                            current_tool = None
-                    elif event_type == "message_delta":
-                        d = data.get("delta", {})
-                        if d.get("stop_reason"):
-                            sr = d["stop_reason"]
-                            if sr == "tool_use":
-                                stop_reason = StopReason.TOOL_USE
-                            elif sr == "max_tokens":
-                                stop_reason = StopReason.LENGTH
-                        u = data.get("usage", {})
-                        if u.get("output_tokens"):
-                            usage.output = u["output_tokens"]
-                    elif event_type == "message_start":
-                        u = data.get("message", {}).get("usage", {})
-                        if u.get("input_tokens"):
-                            usage.input = u["input_tokens"]
-                    elif event_type == "message_stop":
-                        usage.total_tokens = usage.input + usage.output
+                                )
+                            )
+                elif event_type == "content_block_stop":
+                    if current_tool is not None:
+                        tool_calls.append(current_tool)
+                        current_tool = None
+                elif event_type == "message_delta":
+                    d = data.get("delta", {})
+                    if d.get("stop_reason"):
+                        sr = d["stop_reason"]
+                        if sr == "tool_use":
+                            stop_reason = StopReason.TOOL_USE
+                        elif sr == "max_tokens":
+                            stop_reason = StopReason.LENGTH
+                    u = data.get("usage", {})
+                    if u.get("output_tokens"):
+                        usage.output = u["output_tokens"]
+                elif event_type == "message_start":
+                    u = data.get("message", {}).get("usage", {})
+                    if u.get("input_tokens"):
+                        usage.input = u["input_tokens"]
+                elif event_type == "message_stop":
+                    usage.total_tokens = usage.input + usage.output
 
         final_blocks: list[Any] = []
         if text_parts:
@@ -266,8 +279,10 @@ async def _stream_anthropic(
             stop_reason=stop_reason,
             timestamp=int(time.time() * 1000),
         )
-        reason = "toolUse" if stop_reason == StopReason.TOOL_USE else (
-            "length" if stop_reason == StopReason.LENGTH else "stop"
+        reason = (
+            "toolUse"
+            if stop_reason == StopReason.TOOL_USE
+            else ("length" if stop_reason == StopReason.LENGTH else "stop")
         )
         await stream_obj.push(DoneEvent(reason=reason, message=final_msg))
         await stream_obj.end(final_msg)

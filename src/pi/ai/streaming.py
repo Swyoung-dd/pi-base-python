@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -88,6 +89,11 @@ class EventStream:
         self._queue: asyncio.Queue[AssistantMessageEvent | None] = asyncio.Queue()
         self._result: AssistantMessage | None = None
         self._closed = False
+        self._producer_task: asyncio.Task[None] | None = None
+
+    def set_producer_task(self, task: asyncio.Task[None]) -> None:
+        """记录生产者任务，以便调用方主动取消网络请求。"""
+        self._producer_task = task
 
     async def push(self, event: AssistantMessageEvent) -> None:
         if self._closed:
@@ -95,8 +101,21 @@ class EventStream:
         await self._queue.put(event)
 
     async def end(self, result: AssistantMessage) -> None:
+        if self._closed:
+            return
         self._result = result
         self._closed = True
+        await self._queue.put(None)
+
+    async def cancel(self) -> None:
+        """取消生产者任务并关闭事件流。"""
+        if self._closed:
+            return
+        self._closed = True
+        if self._producer_task is not None and not self._producer_task.done():
+            self._producer_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._producer_task
         await self._queue.put(None)
 
     def __aiter__(self) -> AsyncIterator[AssistantMessageEvent]:
