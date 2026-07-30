@@ -42,7 +42,9 @@ def create_compact_tool(get_agent: Any = None) -> AgentTool:
             return AgentToolResult(
                 tool_call_id=call.id,
                 tool_name=call.name,
-                content=[TextContent(text="Agent is currently busy. Retry after the current turn.")],
+                content=[
+                    TextContent(text="Agent is currently busy. Retry after the current turn.")
+                ],
                 is_error=True,
             )
 

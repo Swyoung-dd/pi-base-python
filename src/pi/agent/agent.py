@@ -223,7 +223,11 @@ class Agent:
         limit = self._context_token_limit
         if target_tokens is None:
             target_tokens = self._compact_to_tokens or (
-                (limit * 3 // 4) if limit else (model.context_window * 3 // 4) if model and model.context_window else len(messages) * 50
+                (limit * 3 // 4)
+                if limit
+                else (model.context_window * 3 // 4)
+                if model and model.context_window
+                else len(messages) * 50
             )
         estimated = estimate_context_tokens_with_overhead(
             messages,
