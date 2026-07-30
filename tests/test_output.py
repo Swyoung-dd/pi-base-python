@@ -5,7 +5,9 @@ import json
 from pi.agent.types import (
     AgentAssistantMessage,
     AgentEndEvent,
+    MessageStartEvent,
     TextDeltaUpdateEvent,
+    ThinkingDeltaUpdateEvent,
     create_user_message,
 )
 from pi.ai.types import TextContent, Usage
@@ -49,3 +51,15 @@ async def test_text_renderer_is_awaitable(capsys):
     renderer = PrintRenderer("text")
     await renderer(TextDeltaUpdateEvent(delta="hello"))
     assert capsys.readouterr().out == "hello"
+
+
+async def test_text_renderer_writes_thinking_to_stderr(capsys):
+    renderer = PrintRenderer("text")
+
+    await renderer(MessageStartEvent())
+    await renderer(ThinkingDeltaUpdateEvent(delta="reasoning"))
+    await renderer(TextDeltaUpdateEvent(delta="answer"))
+
+    captured = capsys.readouterr()
+    assert captured.out == "answer"
+    assert captured.err == "[thinking]\nreasoning\n"

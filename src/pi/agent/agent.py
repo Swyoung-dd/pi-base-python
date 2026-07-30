@@ -179,6 +179,11 @@ class Agent:
         return self._context_token_limit
 
     @property
+    def thinking_level(self) -> ModelThinkingLevel:
+        """返回后续模型请求使用的思考级别。"""
+        return self._thinking_level
+
+    @property
     def session_storage(self) -> SessionStorage | None:
         """返回当前会话存储，供嵌入层执行显式状态操作。"""
         return self._session_storage
@@ -298,6 +303,13 @@ class Agent:
             if model.context_window
             else None
         )
+
+    def set_thinking_level(self, level: ModelThinkingLevel) -> None:
+        """在空闲状态切换后续请求使用的思考级别。"""
+        if self.is_busy:
+            raise RuntimeError("Agent is already processing")
+        self._thinking_level = level
+        self._state.thinking_level = level.value
 
     def reset(self) -> None:
         self._state.messages.clear()

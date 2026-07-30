@@ -60,6 +60,26 @@ async def test_model_command_updates_toolbar(tmp_path, monkeypatch):
     assert await resolve_stored_api_key(replacement.provider, store) == "new-key"
 
 
+async def test_thinking_command_updates_toolbar_and_persists_selection(tmp_path):
+    model = next(candidate for candidate in list_models() if candidate.reasoning)
+    selected_levels = []
+    session = InteractiveSession(
+        model=model,
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        history_file=tmp_path / "history",
+        on_thinking_selected=selected_levels.append,
+    )
+
+    handled, should_exit = await session._handle_command("/thinking high")
+
+    assert handled and not should_exit
+    assert session._agent.thinking_level.value == "high"
+    assert "thinking high" in session._bottom_toolbar()
+    assert [level.value for level in selected_levels] == ["high"]
+
+
 async def test_model_command_is_restored_from_session(tmp_path, monkeypatch):
     models = list_models()
     initial = models[0]

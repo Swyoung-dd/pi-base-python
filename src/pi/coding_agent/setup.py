@@ -6,6 +6,7 @@ import click
 
 from pi.ai.models import list_models
 from pi.ai.oauth import CredentialStore
+from pi.ai.types import ModelThinkingLevel
 from pi.coding_agent.config import Config, save_config
 from pi.coding_agent.model_auth import ensure_model_auth
 
@@ -32,6 +33,20 @@ async def run_setup(
         return config
     config.model = model.id
     config.provider = model.provider
+    if model.reasoning:
+        levels = [level.value for level in ModelThinkingLevel]
+        default_level = (
+            config.thinking_level
+            if config.thinking_level in levels and config.thinking_level != "off"
+            else ModelThinkingLevel.MEDIUM.value
+        )
+        config.thinking_level = click.prompt(
+            "Thinking level",
+            type=click.Choice(levels),
+            default=default_level,
+        )
+    else:
+        config.thinking_level = ModelThinkingLevel.OFF.value
     save_config(config)
     click.echo(f"Configured: {model.provider}/{model.id}")
     return config

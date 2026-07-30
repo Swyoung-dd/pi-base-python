@@ -50,6 +50,7 @@ class PrintRenderer:
 
     def __init__(self, output_format: str = "text") -> None:
         self.output_format = output_format
+        self._thinking_started = False
 
     async def __call__(self, event: AgentEvent) -> None:
         if self.output_format == "jsonl":
@@ -66,8 +67,21 @@ class PrintRenderer:
                 )
             return
 
-        if event.type == "text_delta":
+        if event.type == "message_start":
+            self._thinking_started = False
+        elif event.type == "thinking_delta":
+            if not self._thinking_started:
+                click.echo("[thinking]", err=True)
+                self._thinking_started = True
+            click.echo(event.delta, nl=False, err=True)
+        elif event.type == "text_delta":
+            if self._thinking_started:
+                click.echo(err=True)
+                self._thinking_started = False
             click.echo(event.delta, nl=False)
+        elif event.type == "message_end" and self._thinking_started:
+            click.echo(err=True)
+            self._thinking_started = False
         elif event.type == "tool_execution_start":
             from pi.tui.interactive import _format_tool_display
 

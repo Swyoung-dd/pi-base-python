@@ -20,7 +20,7 @@ async def test_setup_selects_model_api_key_and_persists_both(tmp_path, monkeypat
     monkeypatch.delenv("PIY_API_KEY_DEEPSEEK", raising=False)
     monkeypatch.setattr(
         "pi.coding_agent.setup.click.prompt",
-        lambda *args, **kwargs: selected_index,
+        lambda message, **kwargs: selected_index if message == "Select model" else "high",
     )
 
     async def prompt_api_key(message):
@@ -33,6 +33,7 @@ async def test_setup_selects_model_api_key_and_persists_both(tmp_path, monkeypat
     restored = load_config(tmp_path)
     assert restored.is_configured
     assert (restored.provider, restored.model) == (selected.provider, selected.id)
+    assert restored.thinking_level == "high"
     assert await resolve_stored_api_key(selected.provider, store) == "setup-key"
 
 

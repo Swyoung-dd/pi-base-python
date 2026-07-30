@@ -131,6 +131,7 @@ class InteractiveSession:
         history_file: Path | None = None,
         credential_store: CredentialStore | None = None,
         on_model_selected: Callable[[Model], None] | None = None,
+        on_thinking_selected: Callable[[ModelThinkingLevel], None] | None = None,
     ) -> None:
         self._cwd = (cwd or Path.cwd()).resolve()
         self._theme = theme or Theme()
@@ -176,6 +177,7 @@ class InteractiveSession:
             "skill",
             "steer",
             "templates",
+            "thinking",
             "tree",
         }
         conflicts = set(self._prompt_templates) & (reserved_commands | set(self._commands))
@@ -188,6 +190,7 @@ class InteractiveSession:
             raise ValueError(f"Extension command conflicts: {names}")
         self._credential_store = credential_store or get_default_credential_store()
         self._on_model_selected = on_model_selected
+        self._on_thinking_selected = on_thinking_selected
         command_names = [
             "/clear",
             "/branch",
@@ -199,6 +202,7 @@ class InteractiveSession:
             "/resume",
             "/sessions",
             "/templates",
+            "/thinking",
             "/tree",
             "/skill",
             "/steer",
@@ -222,6 +226,7 @@ class InteractiveSession:
         """根据当前流式内容创建消息面板。"""
         content = []
         if self._current_thinking:
+            content.append(Text("Thinking", style=self._theme.muted))
             content.append(Text(self._current_thinking, style=self._theme.thinking))
         if self._current_text:
             content.append(Markdown(self._current_text))
@@ -284,11 +289,44 @@ class InteractiveSession:
                 "/new  /resume <id>  /sessions  /model [provider/id]  "
                 "/tree  /branch <entry-id>  "
                 "/compact [target_tokens]  "
+                "/thinking [level]  "
                 "/templates  /<template> [arguments]  "
                 "/skill <name> [task]  /steer <message>  /follow-up <message>  "
                 "/clear  /help  /exit",
                 style=self._theme.muted,
             )
+            return True, False
+        if command == "/thinking":
+            model = self._agent.state.model
+            if model is None or not model.reasoning:
+                self._console.print(
+                    "Current model does not support thinking.",
+                    style=self._theme.warning,
+                )
+                return True, False
+            if not argument:
+                levels = " ".join(level.value for level in ModelThinkingLevel)
+                self._console.print(
+                    f"Thinking: {self._agent.thinking_level.value}\nAvailable: {levels}",
+                    style=self._theme.muted,
+                )
+                return True, False
+            try:
+                level = ModelThinkingLevel(argument.lower())
+            except ValueError:
+                self._console.print(
+                    f"Invalid thinking level: {argument}",
+                    style=self._theme.error,
+                )
+                return True, False
+            try:
+                self._agent.set_thinking_level(level)
+            except RuntimeError as exc:
+                self._console.print(str(exc), style=self._theme.warning)
+                return True, False
+            if self._on_thinking_selected is not None:
+                self._on_thinking_selected(level)
+            self._console.print(f"Thinking: {level.value}", style=self._theme.muted)
             return True, False
         if command == "/compact":
             if self._agent.is_busy:
@@ -601,7 +639,10 @@ class InteractiveSession:
                 f"{_format_tokens(context_usage.context_window)} "
                 f"({context_usage.percent:.1f}%)"
             )
-        return f" {model_name}{context} | session {session} "
+        thinking = ""
+        if model is not None and model.reasoning:
+            thinking = f" | thinking {self._agent.thinking_level.value}"
+        return f" {model_name}{thinking}{context} | session {session} "
 
     async def _restore_session_model(self) -> None:
         """恢复当前分支最后记录的模型选择。"""
@@ -649,6 +690,8 @@ class InteractiveSession:
             )
         )
         self._console.print(f"Model: [bold]{self._agent.state.model.id}[/bold]")
+        if self._agent.state.model.reasoning:
+            self._console.print(f"Thinking: [bold]{self._agent.thinking_level.value}[/bold]")
         self._console.print("Type your message and press Enter. Ctrl+C to exit.\n")
 
         previous_sigint = signal.getsignal(signal.SIGINT)

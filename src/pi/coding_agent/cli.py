@@ -122,6 +122,10 @@ async def run_interactive_mode(
         config.provider = selected_model.provider
         save_config(config)
 
+    def persist_thinking(level: ModelThinkingLevel) -> None:
+        config.thinking_level = level.value
+        save_config(config)
+
     session = InteractiveSession(
         model=model,
         system_prompt=system_prompt,
@@ -141,6 +145,7 @@ async def run_interactive_mode(
         cwd=cwd,
         history_file=config.config_dir / "history",
         on_model_selected=persist_model,
+        on_thinking_selected=persist_thinking,
     )
     await session.run()
 

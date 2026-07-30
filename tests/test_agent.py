@@ -14,7 +14,14 @@ from pi.agent.types import (
     create_user_message,
 )
 from pi.ai.streaming import DoneEvent, EventStream
-from pi.ai.types import AssistantMessage, Model, StopReason, TextContent, ToolCall
+from pi.ai.types import (
+    AssistantMessage,
+    Model,
+    ModelThinkingLevel,
+    StopReason,
+    TextContent,
+    ToolCall,
+)
 
 
 @pytest.mark.asyncio
@@ -185,11 +192,14 @@ async def test_agent_passes_generation_options_to_provider():
             max_tokens=512,
         )
     )
+    agent.set_thinking_level(ModelThinkingLevel.HIGH)
 
     await agent.prompt("hello")
 
     assert seen_options[0].temperature == 0.25
     assert seen_options[0].max_tokens == 512
+    assert seen_options[0].thinking_level == ModelThinkingLevel.HIGH
+    assert agent.state.thinking_level == "high"
     assert agent.context_token_limit == 9_488
 
 

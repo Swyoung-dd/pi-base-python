@@ -64,8 +64,11 @@ piY --setup
 piY --help
 piY --list-models
 piY -p "Summarize @README.md" --output json
+piY --thinking high
 python -m pi --version
 ```
+
+在交互模式中执行 `/thinking` 可查看当前思考级别，执行 `/thinking high` 可切换并持久化级别。支持 reasoning 的模型会在状态栏显示 `thinking <level>`，模型返回的思考内容会显示在回答面板的 `Thinking` 区域。
 
 ## 打包
 

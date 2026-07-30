@@ -4,7 +4,7 @@ from contextlib import AbstractAsyncContextManager
 
 from pi.ai.providers import openai
 from pi.ai.streaming import EventStream
-from pi.ai.types import Model, StopReason
+from pi.ai.types import Model, StopReason, ThinkingContent
 
 
 class _ResponseContext(AbstractAsyncContextManager):
@@ -83,6 +83,25 @@ async def test_openai_sse_tracks_cached_and_reasoning_tokens(monkeypatch):
     assert message.usage.output == 6
     assert message.usage.reasoning == 2
     assert message.usage.total_tokens == 16
+
+
+async def test_openai_sse_emits_reasoning_content(monkeypatch):
+    _install_fake_client(
+        monkeypatch,
+        [
+            'data: {"choices":[{"delta":{"reasoning_content":"think"},'
+            '"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{"content":"answer"},'
+            '"finish_reason":"stop"}]}',
+            "data: [DONE]",
+        ],
+    )
+
+    events = await _run_stream()
+
+    assert [event.type for event in events].count("thinking_delta") == 1
+    assert isinstance(events[-1].message.content[0], ThinkingContent)
+    assert events[-1].message.content[0].thinking == "think"
 
 
 async def test_openai_rejects_invalid_tool_arguments(monkeypatch):
