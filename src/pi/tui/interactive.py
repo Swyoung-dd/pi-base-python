@@ -17,15 +17,19 @@ from typing import Any
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.formatted_text import StyleAndTextTuples
 from prompt_toolkit.history import FileHistory, InMemoryHistory
 from prompt_toolkit.input import DummyInput
 from prompt_toolkit.output import DummyOutput
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
-from rich.console import Console, Group
+from rich import box
+from rich.console import Console, Group, RenderableType
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.table import Table
 from rich.text import Text
+from rich.tree import Tree
 
 from pi.agent.agent import Agent, AgentOptions
 from pi.agent.session.base import SessionStorage
@@ -34,12 +38,13 @@ from pi.agent.tools import ToolContext
 from pi.agent.types import AgentEvent, AgentTool, create_user_message
 from pi.ai.models import list_models
 from pi.ai.oauth import CredentialStore, get_default_credential_store
-from pi.ai.types import Model, ModelThinkingLevel, TextContent, ThinkingContent, Usage
+from pi.ai.types import Model, ModelThinkingLevel, TextContent, ThinkingContent, ToolCall, Usage
 from pi.coding_agent.extensions import ExtensionCommand, ExtensionContext
 from pi.coding_agent.file_references import expand_file_references
 from pi.coding_agent.model_auth import contains_likely_api_key, ensure_model_auth
 from pi.coding_agent.prompt_templates import PromptTemplate
 from pi.coding_agent.sessions import (
+    SessionInfo,
     format_session_tree,
     list_sessions,
     new_session_id,
@@ -55,9 +60,26 @@ _PROMPT_STYLE = Style.from_dict(
         "frame.border": "#3b82f6",
         "input.prompt": "bold #60a5fa",
         "input.placeholder": "#6b7280",
-        "bottom-toolbar": "bg:#1f2937 #d1d5db",
+        "input.ready": "bold #a3e635",
+        "input.working": "bold #fbbf24",
+        "bottom-toolbar": "bg:#171717 #d1d5db",
+        "status.brand": "bold bg:#2563eb #ffffff",
+        "status.model": "bold #22d3ee",
+        "status.thinking": "#c084fc",
+        "status.context": "#a3e635",
+        "status.meta": "#9ca3af",
+        "status.separator": "#525252",
+        "stream.label": "bold #fbbf24",
+        "stream.text": "italic #a3a3a3",
     }
 )
+
+_PIY_LOGO = """       _ __   __
+ _ __ (_)\\ \\ / /
+| '_ \\| | \\ V /
+| |_) | |  | |
+| .__/|_|  |_|
+|_|"""
 
 
 def _format_tokens(tokens: int) -> str:
@@ -98,6 +120,13 @@ def _format_tool_display(tool_name: str, arguments: dict) -> str:
         return f"grep{suffix}"
     else:
         return tool_name
+
+
+def _format_tool_target(tool_name: str, arguments: dict) -> str:
+    """生成工具树子项文本，去除已经由分组标题表达的工具名称。"""
+    display = _format_tool_display(tool_name, arguments)
+    prefix = f"{tool_name}: "
+    return display.removeprefix(prefix)
 
 
 class _SafeFileHistory(FileHistory):
@@ -163,6 +192,7 @@ class InteractiveSession:
         self._current_text = ""
         self._current_thinking = ""
         self._agent_task: asyncio.Task[None] | None = None
+        self._request_active = False
         self._request_usage = Usage()
         self._sessions_dir = sessions_dir
         self._session_id = session_id
@@ -228,25 +258,114 @@ class InteractiveSession:
             completer=WordCompleter(sorted(command_names), sentence=True),
             complete_while_typing=False,
             placeholder=[("class:input.placeholder", "Type a message or /command")],
+            rprompt=self._input_state,
             show_frame=True,
             style=_PROMPT_STYLE,
             input=None if interactive_terminal else DummyInput(),
             output=None if interactive_terminal else DummyOutput(),
         )
 
-    def _message_panel(self) -> Panel:
-        """根据当前消息内容创建最终输出面板。"""
-        content = []
+    def _tool_tree(self, tool_calls: list[ToolCall]) -> list[Tree]:
+        """把同一轮工具调用按工具名称分组为紧凑树形结构。"""
+        groups: dict[str, list[ToolCall]] = {}
+        for call in tool_calls:
+            groups.setdefault(call.name, []).append(call)
+
+        trees = []
+        labels = {
+            "bash": "Bash",
+            "edit": "Edit",
+            "find": "Find",
+            "grep": "Grep",
+            "ls": "List",
+            "read": "Read",
+            "write": "Write",
+        }
+        for tool_name, calls in groups.items():
+            count = f" ({len(calls)})" if len(calls) > 1 else ""
+            title = Text.assemble(
+                ("> ", self._theme.success),
+                (labels.get(tool_name, tool_name), self._theme.primary),
+                (count, self._theme.muted),
+            )
+            tree = Tree(title, guide_style=self._theme.muted)
+            for call in calls:
+                tree.add(Text(_format_tool_target(call.name, call.arguments)))
+            trees.append(tree)
+        return trees
+
+    def _message_renderable(self, tool_calls: list[ToolCall]) -> RenderableType | None:
+        """创建轻量消息正文，避免每一轮内容都被边框切割。"""
+        content: list[RenderableType] = []
         if self._current_thinking:
-            content.append(Text("Thinking", style=self._theme.muted))
             content.append(Text(self._current_thinking, style=self._theme.thinking))
         if self._current_text:
             content.append(Markdown(self._current_text))
+        content.extend(self._tool_tree(tool_calls))
+        return Group(*content) if content else None
+
+    def _welcome_panel(self, version: str, sessions: list[SessionInfo]) -> Panel:
+        """构建响应式欢迎面板。"""
+        model = self._agent.state.model
+        brand = Text(_PIY_LOGO, style=self._theme.primary)
+        brand.append("\n\n")
+        brand.append(model.name if model else "No model", style="bold")
+        if model is not None:
+            brand.append(f"\n{model.provider}", style=self._theme.muted)
+        if model is not None and model.reasoning:
+            brand.append(
+                f"  thinking {self._agent.thinking_level.value}",
+                style=self._theme.thinking,
+            )
+
+        actions = Text()
+        actions.append("Quick actions\n", style=self._theme.primary)
+        for command, description in (
+            ("/help", "Commands"),
+            ("/model", "Switch model"),
+            ("/thinking", "Reasoning level"),
+            ("/sessions", "Session history"),
+        ):
+            actions.append(f"{command:<12}", style=self._theme.primary)
+            actions.append(f"{description}\n", style=self._theme.muted)
+
+        recent = Text()
+        recent.append("\nRecent sessions\n", style=self._theme.primary)
+        visible_sessions = [item for item in sessions if item.session_id != self._session_id][:3]
+        if not visible_sessions:
+            recent.append("No recent sessions", style=self._theme.muted)
+        for item in visible_sessions:
+            preview = item.preview or "Empty session"
+            recent.append(f"{item.session_id[:8]}  ", style=self._theme.primary)
+            recent.append(f"{preview}\n", style=self._theme.muted)
+
+        details = Group(actions, recent)
+        grid = Table.grid(expand=True, padding=(0, 2))
+        if self._console.width >= 90:
+            grid.add_column(width=24)
+            grid.add_column(ratio=1)
+            grid.add_row(brand, details)
+        else:
+            grid.add_column(ratio=1)
+            grid.add_row(brand)
+            grid.add_row(details)
+
+        width = min(96, max(20, self._console.width - 2))
         return Panel(
-            Group(*content),
-            title="piY",
+            grid,
+            title=f" piY v{version} ",
+            subtitle=f" workspace {self._cwd.name} ",
+            subtitle_align="left",
             border_style=self._theme.primary,
+            box=box.SQUARE,
+            width=width,
         )
+
+    def _input_state(self) -> StyleAndTextTuples:
+        """显示当前输入区状态。"""
+        if self._request_active:
+            return [("class:input.working", " Working ")]
+        return [("class:input.ready", " Ready ")]
 
     def _refresh_stream_preview(self) -> None:
         """通知输入应用刷新流式状态，避免多个渲染器争用终端光标。"""
@@ -264,8 +383,8 @@ class InteractiveSession:
         label = "Answer" if self._current_text else "Thinking"
         available = max(20, self._console.width - len(label) - 5)
         if len(preview) > available:
-            preview = f"...{preview[-(available - 3):]}"
-        return f"\n {label}: {preview}"
+            preview = f"...{preview[-(available - 3) :]}"
+        return f"{label}: {preview}"
 
     def _record_usage(self, usage: Usage) -> None:
         """累计一次用户请求内所有模型轮次的 token 用量。"""
@@ -292,6 +411,8 @@ class InteractiveSession:
         try:
             await self._agent.prompt(prompt)
         finally:
+            self._request_active = False
+            self._refresh_stream_preview()
             self._print_request_usage()
 
     async def _handle_command(self, prompt: str) -> tuple[bool, bool]:
@@ -582,7 +703,9 @@ class InteractiveSession:
                 self._console.print("Queued steering message.", style=self._theme.muted)
             return
         self._request_usage = Usage()
+        self._request_active = True
         self._agent_task = asyncio.create_task(self._run_agent_prompt(prompt))
+        self._refresh_stream_preview()
 
     async def _on_event(self, event: AgentEvent) -> None:
         """处理 agent 事件用于显示。"""
@@ -609,8 +732,10 @@ class InteractiveSession:
             )
             self._current_text = final_text or self._current_text
             self._current_thinking = final_thinking or self._current_thinking
-            if self._current_text or self._current_thinking:
-                self._console.print(self._message_panel())
+            tool_calls = [block for block in event.message.content if isinstance(block, ToolCall)]
+            renderable = self._message_renderable(tool_calls)
+            if renderable is not None:
+                self._console.print(renderable)
             self._current_text = ""
             self._current_thinking = ""
             self._refresh_stream_preview()
@@ -618,8 +743,6 @@ class InteractiveSession:
             self._current_text = ""
             self._current_thinking = ""
             self._refresh_stream_preview()
-            label = _format_tool_display(event.tool_name, event.arguments)
-            self._console.print(f"  -> {label}", style=self._theme.muted)
         elif event.type == "tool_execution_end":
             if event.result and event.result.is_error:
                 for block in event.result.content:
@@ -644,23 +767,62 @@ class InteractiveSession:
                 style=self._theme.muted,
             )
 
-    def _bottom_toolbar(self) -> str:
+    def _bottom_toolbar(self) -> StyleAndTextTuples:
         model = self._agent.state.model
-        model_name = f"{model.provider}/{model.id}" if model else "no model"
-        session = self._session_id or "memory"
+        model_name = model.name if model else "No model"
+        session = self._session_id[:8] if self._session_id else "memory"
+        width = self._console.width
         context_usage = self._agent.get_context_usage()
-        context = ""
-        if context_usage is not None:
-            context = (
-                f" | ctx {_format_tokens(context_usage.tokens)}/"
-                f"{_format_tokens(context_usage.context_window)} "
-                f"({context_usage.percent:.1f}%)"
+        fragments: StyleAndTextTuples = [
+            ("class:status.brand", " piY "),
+            ("class:status.separator", " | "),
+            ("class:status.model", f"{model_name}"),
+        ]
+        if width >= 72 and model is not None and model.reasoning:
+            fragments.extend(
+                [
+                    ("class:status.separator", " | "),
+                    ("class:status.thinking", f"thinking {self._agent.thinking_level.value}"),
+                ]
             )
-        thinking = ""
-        if model is not None and model.reasoning:
-            thinking = f" | thinking {self._agent.thinking_level.value}"
-        status = f" {model_name}{thinking}{context} | session {session} "
-        return f"{status}{self._stream_preview()}"
+        if width >= 52 and context_usage is not None:
+            fragments.extend(
+                [
+                    ("class:status.separator", " | "),
+                    (
+                        "class:status.context",
+                        f"ctx {_format_tokens(context_usage.tokens)}/"
+                        f"{_format_tokens(context_usage.context_window)} "
+                        f"{context_usage.percent:.1f}%",
+                    ),
+                ]
+            )
+        if width >= 100:
+            fragments.extend(
+                [
+                    ("class:status.separator", " | "),
+                    ("class:status.meta", f"session {session}"),
+                ]
+            )
+        if width >= 130:
+            fragments.extend(
+                [
+                    ("class:status.separator", " | "),
+                    ("class:status.meta", str(self._cwd)),
+                ]
+            )
+        fragments.append(("class:status.meta", " "))
+        preview = self._stream_preview()
+        if preview:
+            label, content = preview.split(": ", maxsplit=1)
+            fragments.extend(
+                [
+                    ("", "\n "),
+                    ("class:stream.label", f"{label}: "),
+                    ("class:stream.text", content),
+                ]
+            )
+        return fragments
 
     async def _restore_session_model(self) -> None:
         """恢复当前分支最后记录的模型选择。"""
@@ -701,16 +863,9 @@ class InteractiveSession:
             {"session_id": self._session_id},
         )
 
-        self._console.print(
-            Panel(
-                Text(f"piY v{__version__} - coding agent", justify="center"),
-                border_style=self._theme.primary,
-            )
-        )
-        self._console.print(f"Model: [bold]{self._agent.state.model.id}[/bold]")
-        if self._agent.state.model.reasoning:
-            self._console.print(f"Thinking: [bold]{self._agent.thinking_level.value}[/bold]")
-        self._console.print("Type your message and press Enter. Ctrl+C to exit.\n")
+        sessions = await list_sessions(self._sessions_dir) if self._sessions_dir else []
+        self._console.print(self._welcome_panel(__version__, sessions))
+        self._console.print()
 
         previous_sigint = signal.getsignal(signal.SIGINT)
 

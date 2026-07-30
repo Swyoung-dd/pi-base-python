@@ -3,6 +3,8 @@
 from unittest.mock import Mock
 
 import pytest
+from prompt_toolkit.formatted_text import fragment_list_to_text, to_formatted_text
+from rich.console import Console, Group
 from rich.panel import Panel
 
 from pi.agent.session import JsonlStorage
@@ -26,6 +28,10 @@ from pi.tui.interactive import InteractiveSession, _format_tokens, _SafeFileHist
 
 async def _unused_stream(model, context, options):
     raise AssertionError("stream should not be called")
+
+
+def _toolbar_text(session: InteractiveSession) -> str:
+    return fragment_list_to_text(to_formatted_text(session._bottom_toolbar()))
 
 
 async def test_model_command_updates_toolbar(tmp_path, monkeypatch):
@@ -56,8 +62,9 @@ async def test_model_command_updates_toolbar(tmp_path, monkeypatch):
     )
 
     assert handled and not should_exit
-    assert f"{replacement.provider}/{replacement.id}" in session._bottom_toolbar()
-    assert "test-session" in session._bottom_toolbar()
+    session._console = Console(width=120)
+    assert replacement.name in _toolbar_text(session)
+    assert "test-ses" in _toolbar_text(session)
     assert selected_models == [replacement]
     assert await resolve_stored_api_key(replacement.provider, store) == "new-key"
 
@@ -78,7 +85,7 @@ async def test_thinking_command_updates_toolbar_and_persists_selection(tmp_path)
 
     assert handled and not should_exit
     assert session._agent.thinking_level.value == "high"
-    assert "thinking high" in session._bottom_toolbar()
+    assert "thinking high" in _toolbar_text(session)
     assert [level.value for level in selected_levels] == ["high"]
 
 
@@ -142,7 +149,7 @@ async def test_model_command_is_restored_from_session(tmp_path, monkeypatch):
     await restored._agent.restore()
     await restored._restore_session_model()
 
-    assert f"{replacement.provider}/{replacement.id}" in restored._bottom_toolbar()
+    assert replacement.name in _toolbar_text(restored)
 
 
 async def test_new_session_records_current_model(tmp_path):
@@ -188,10 +195,29 @@ def test_toolbar_shows_context_usage_and_percentage(tmp_path):
         )
     )
 
-    toolbar = session._bottom_toolbar()
+    toolbar = _toolbar_text(session)
 
     assert f"ctx 10k/{_format_tokens(model.context_window)}" in toolbar
-    assert f"({10_000 / model.context_window * 100:.1f}%)" in toolbar
+    assert f"{10_000 / model.context_window * 100:.1f}%" in toolbar
+
+
+def test_toolbar_prioritizes_core_status_on_narrow_terminal(tmp_path):
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        session_id="long-session-id",
+        history_file=tmp_path / "history",
+    )
+    session._console = Console(width=60)
+
+    toolbar = _toolbar_text(session)
+
+    assert len(toolbar.splitlines()[0]) <= 60
+    assert "ctx " in toolbar
+    assert "session" not in toolbar
+    assert str(tmp_path) not in toolbar
 
 
 def test_interactive_session_accepts_custom_theme(tmp_path):
@@ -298,7 +324,7 @@ async def test_model_command_selects_model_and_prompts_for_api_key(tmp_path, mon
     handled, should_exit = await session._handle_command("/model")
 
     assert handled and not should_exit
-    assert f"deepseek/{selected_model.id}" in session._bottom_toolbar()
+    assert selected_model.name in _toolbar_text(session)
     assert await resolve_stored_api_key("deepseek", store) == "deepseek-secret"
     assert prompt_messages == ["deepseek API key: "]
 
@@ -328,7 +354,7 @@ def test_file_history_does_not_store_likely_api_keys(tmp_path):
     assert "sk-" not in content
 
 
-async def test_tool_only_message_does_not_render_empty_panel(tmp_path):
+async def test_tool_only_message_renders_grouped_tree(tmp_path):
     session = InteractiveSession(
         model=list_models()[0],
         system_prompt="",
@@ -344,7 +370,14 @@ async def test_tool_only_message_does_not_render_empty_panel(tmp_path):
     await session._on_event(MessageStartEvent(message=message))
     await session._on_event(MessageEndEvent(message=message))
 
-    session._console.print.assert_not_called()
+    session._console.print.assert_called_once()
+    renderable = session._console.print.call_args.args[0]
+    assert isinstance(renderable, Group)
+    console = Console(record=True, width=80)
+    console.print(renderable)
+    output = console.export_text()
+    assert "Read" in output
+    assert "README.md" in output
 
 
 async def test_non_streaming_text_message_is_rendered_once(tmp_path):
@@ -362,7 +395,7 @@ async def test_non_streaming_text_message_is_rendered_once(tmp_path):
     await session._on_event(MessageEndEvent(message=message))
 
     session._console.print.assert_called_once()
-    assert isinstance(session._console.print.call_args.args[0], Panel)
+    assert isinstance(session._console.print.call_args.args[0], Group)
 
 
 async def test_streaming_preview_uses_prompt_toolbar_and_prints_final_once(tmp_path):
@@ -379,14 +412,14 @@ async def test_streaming_preview_uses_prompt_toolbar_and_prints_final_once(tmp_p
     await session._on_event(MessageStartEvent(message=message))
     await session._on_event(TextDeltaUpdateEvent(delta="partial"))
 
-    assert "Answer: partial" in session._bottom_toolbar()
+    assert "Answer: partial" in _toolbar_text(session)
 
     await session._on_event(MessageEndEvent(message=message))
 
-    assert "partial" not in session._bottom_toolbar()
+    assert "partial" not in _toolbar_text(session)
     session._console.print.assert_called_once()
     final_panel = session._console.print.call_args.args[0]
-    assert isinstance(final_panel, Panel)
+    assert isinstance(final_panel, Group)
 
 
 async def test_thinking_stream_is_visible_in_prompt_toolbar(tmp_path):
@@ -400,7 +433,45 @@ async def test_thinking_stream_is_visible_in_prompt_toolbar(tmp_path):
 
     await session._on_event(ThinkingDeltaUpdateEvent(delta="checking project files"))
 
-    assert "Thinking: checking project files" in session._bottom_toolbar()
+    assert "Thinking: checking project files" in _toolbar_text(session)
+
+
+def test_welcome_panel_shows_model_actions_and_recent_sessions(tmp_path):
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        cwd=tmp_path,
+        history_file=tmp_path / "history",
+    )
+    session._console = Console(record=True, width=120)
+
+    panel = session._welcome_panel("0.1.0", [])
+    session._console.print(panel)
+    output = session._console.export_text()
+
+    assert isinstance(panel, Panel)
+    assert "piY v0.1.0" in output
+    assert "Quick actions" in output
+    assert "/model" in output
+    assert "No recent sessions" in output
+    assert f"workspace {tmp_path.name}" in output
+
+
+def test_welcome_panel_fits_narrow_terminal(tmp_path):
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        history_file=tmp_path / "history",
+    )
+    session._console = Console(width=60)
+
+    panel = session._welcome_panel("0.1.0", [])
+
+    assert panel.width == 58
 
 
 async def test_turn_usage_is_aggregated_before_display(tmp_path):
