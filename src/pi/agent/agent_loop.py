@@ -17,6 +17,7 @@ import asyncio
 import time
 from typing import Any
 
+from pi.agent.compaction import compact_messages, estimate_messages_tokens
 from pi.agent.types import (
     AgentAssistantMessage,
     AgentContext,
@@ -27,6 +28,7 @@ from pi.agent.types import (
     AgentToolResult,
     AgentToolResultMessage,
     AgentUserMessage,
+    ContextCompactedEvent,
     MessageEndEvent,
     MessageStartEvent,
     TextDeltaUpdateEvent,
@@ -151,7 +153,21 @@ async def run_agent_loop(
     ai_tools = [t.to_ai_tool() for t in context.tools] if context.tools else None
 
     while True:
-        llm_messages = convert_to_llm(all_messages)
+        context_messages = all_messages
+        if options and options.context_token_limit:
+            estimated_tokens = estimate_messages_tokens(all_messages)
+            if estimated_tokens > options.context_token_limit:
+                target_tokens = options.compact_to_tokens or (options.context_token_limit * 3 // 4)
+                compacted = compact_messages(all_messages, target_tokens)
+                context_messages = compacted.messages
+                await sink(
+                    ContextCompactedEvent(
+                        original_tokens=compacted.original_tokens,
+                        compacted_tokens=compacted.compacted_tokens,
+                        dropped_messages=compacted.dropped_messages,
+                    )
+                )
+        llm_messages = convert_to_llm(context_messages)
         llm_context = Context(
             system_prompt=context.system_prompt,
             messages=llm_messages,

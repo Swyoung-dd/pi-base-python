@@ -34,6 +34,7 @@ class ToolExecutionMode(StrEnum):
 
 # ---- Agent 消息（扩展 LLM 消息，添加 agent 元数据） ----
 
+
 @dataclass
 class AgentUserMessage:
     role: Literal["user"] = "user"
@@ -79,6 +80,7 @@ ToolExecuteFn = Callable[
 @dataclass
 class AgentTool:
     """Agent 可调用的工具。将 pi-ai Tool 与 execute 函数封装。"""
+
     name: str
     description: str
     parameters: dict[str, Any]  # JSON Schema
@@ -86,6 +88,7 @@ class AgentTool:
 
     def to_ai_tool(self) -> Tool:
         from pi.ai.types import ToolParameterSchema
+
         if isinstance(self.parameters, dict):
             params = ToolParameterSchema(**self.parameters)
         else:
@@ -100,6 +103,7 @@ class AgentTool:
 @dataclass
 class AgentToolCall:
     """来自助手的工具调用。"""
+
     id: str
     name: str
     arguments: dict[str, Any]
@@ -108,6 +112,7 @@ class AgentToolCall:
 @dataclass
 class AgentToolResult:
     """工具执行结果。"""
+
     tool_call_id: str
     tool_name: str
     content: list[TextContent | ImageContent] = field(default_factory=list)
@@ -116,6 +121,7 @@ class AgentToolResult:
 
 
 # ---- Agent 状态 ----
+
 
 @dataclass
 class AgentState:
@@ -132,6 +138,7 @@ class AgentState:
 
 # ---- Agent 上下文（传递给循环的快照） ----
 
+
 @dataclass
 class AgentContext:
     system_prompt: str
@@ -140,6 +147,7 @@ class AgentContext:
 
 
 # ---- Agent 事件 ----
+
 
 @dataclass
 class MessageStartEvent:
@@ -162,6 +170,7 @@ class MessageEndEvent:
 @dataclass
 class TextDeltaUpdateEvent:
     """流式文本增量事件，从 provider 透传给 UI 层实时渲染。"""
+
     type: Literal["text_delta"] = "text_delta"
     delta: str = ""
     content_index: int = 0
@@ -170,6 +179,7 @@ class TextDeltaUpdateEvent:
 @dataclass
 class ThinkingDeltaUpdateEvent:
     """流式思考增量事件。"""
+
     type: Literal["thinking_delta"] = "thinking_delta"
     delta: str = ""
     content_index: int = 0
@@ -203,6 +213,16 @@ class AgentEndEvent:
     messages: list[AgentMessage] = field(default_factory=list)
 
 
+@dataclass
+class ContextCompactedEvent:
+    """发送给模型前发生上下文压缩。"""
+
+    type: Literal["context_compacted"] = "context_compacted"
+    original_tokens: int = 0
+    compacted_tokens: int = 0
+    dropped_messages: int = 0
+
+
 AgentEvent = (
     MessageStartEvent
     | MessageUpdateEvent
@@ -213,6 +233,7 @@ AgentEvent = (
     | ToolExecutionEndEvent
     | TurnEndEvent
     | AgentEndEvent
+    | ContextCompactedEvent
 )
 
 
@@ -221,8 +242,10 @@ AgentEventSink = Callable[[AgentEvent], Coroutine[Any, Any, None]]
 
 # ---- 辅助函数 ----
 
+
 def create_user_message(text: str, images: list[ImageContent] | None = None) -> AgentUserMessage:
     import time
+
     if images:
         content: list[TextContent | ImageContent] = [TextContent(text=text)]
         content.extend(images)
