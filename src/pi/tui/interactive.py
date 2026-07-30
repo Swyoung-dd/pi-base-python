@@ -222,28 +222,54 @@ class InteractiveSession:
             output=None if interactive_terminal else DummyOutput(),
         )
 
-    def _message_panel(self) -> Panel:
+    def _message_panel(self, preview: bool = False) -> Panel:
         """根据当前流式内容创建消息面板。"""
         content = []
-        if self._current_thinking:
-            content.append(Text("Thinking", style=self._theme.muted))
-            content.append(Text(self._current_thinking, style=self._theme.thinking))
-        if self._current_text:
-            content.append(Markdown(self._current_text))
-        return Panel(Group(*content), title="piY", border_style=self._theme.primary)
+        height = max(4, min(12, self._console.height // 3)) if preview else None
+        if preview:
+            available_lines = (height or 4) - 2
+            max_chars = max(80, (self._console.width - 4) * available_lines)
+            if self._current_text:
+                content.append(Text(self._current_text[-max_chars:]))
+            elif self._current_thinking:
+                content.append(Text("Thinking", style=self._theme.muted))
+                content.append(
+                    Text(self._current_thinking[-max_chars:], style=self._theme.thinking)
+                )
+        else:
+            if self._current_thinking:
+                content.append(Text("Thinking", style=self._theme.muted))
+                content.append(Text(self._current_thinking, style=self._theme.thinking))
+            if self._current_text:
+                content.append(Markdown(self._current_text))
+        return Panel(
+            Group(*content),
+            title="piY",
+            border_style=self._theme.primary,
+            height=height,
+        )
+
+    def _stop_live(self) -> None:
+        """清除临时流式区域，避免刷新帧进入终端回滚缓冲区。"""
+        if self._live is None:
+            return
+        self._live.stop()
+        self._live = None
 
     def _update_live(self) -> None:
         """仅在收到可见内容后启动实时渲染，避免工具消息产生空框。"""
         if not self._current_text and not self._current_thinking:
             return
-        panel = self._message_panel()
+        panel = self._message_panel(preview=True)
         if self._live is None:
             self._live = Live(
                 panel,
                 console=self._console,
-                refresh_per_second=15,
+                refresh_per_second=4,
+                transient=True,
+                vertical_overflow="crop",
             )
-            self._live.start()
+            self._live.start(refresh=True)
             return
         self._live.update(panel)
 
@@ -577,28 +603,25 @@ class InteractiveSession:
             self._current_thinking += event.delta
             self._update_live()
         elif event.type == "message_end":
-            if self._live:
-                self._live.stop()
-                self._live = None
-            else:
-                self._current_text = "\n".join(
-                    block.text
-                    for block in event.message.content
-                    if isinstance(block, TextContent) and block.text
-                )
-                self._current_thinking = "\n".join(
-                    block.thinking
-                    for block in event.message.content
-                    if isinstance(block, ThinkingContent) and block.thinking
-                )
-                if self._current_text or self._current_thinking:
-                    self._console.print(self._message_panel())
+            final_text = "\n".join(
+                block.text
+                for block in event.message.content
+                if isinstance(block, TextContent) and block.text
+            )
+            final_thinking = "\n".join(
+                block.thinking
+                for block in event.message.content
+                if isinstance(block, ThinkingContent) and block.thinking
+            )
+            self._current_text = final_text or self._current_text
+            self._current_thinking = final_thinking or self._current_thinking
+            self._stop_live()
+            if self._current_text or self._current_thinking:
+                self._console.print(self._message_panel())
             self._current_text = ""
             self._current_thinking = ""
         elif event.type == "tool_execution_start":
-            if self._live:
-                self._live.stop()
-                self._live = None
+            self._stop_live()
             self._current_text = ""
             self._current_thinking = ""
             label = _format_tool_display(event.tool_name, event.arguments)

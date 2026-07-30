@@ -10,6 +10,7 @@ from pi.agent.types import (
     AgentAssistantMessage,
     MessageEndEvent,
     MessageStartEvent,
+    TextDeltaUpdateEvent,
     TurnEndEvent,
     create_user_message,
 )
@@ -326,6 +327,61 @@ async def test_non_streaming_text_message_is_rendered_once(tmp_path):
 
     session._console.print.assert_called_once()
     assert isinstance(session._console.print.call_args.args[0], Panel)
+
+
+async def test_streaming_preview_is_bounded_transient_and_printed_once(
+    tmp_path,
+    monkeypatch,
+):
+    live_instances = []
+
+    class FakeLive:
+        def __init__(self, renderable, **options):
+            self.renderable = renderable
+            self.options = options
+            self.started_with_refresh = None
+            self.stopped = False
+            live_instances.append(self)
+
+        def start(self, refresh=False):
+            self.started_with_refresh = refresh
+
+        def update(self, renderable):
+            self.renderable = renderable
+
+        def stop(self):
+            self.stopped = True
+
+    monkeypatch.setattr("pi.tui.interactive.Live", FakeLive)
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        history_file=tmp_path / "history",
+    )
+    session._console.print = Mock()
+    message = AgentAssistantMessage(content=[TextContent(text="final answer")])
+
+    await session._on_event(MessageStartEvent(message=message))
+    await session._on_event(TextDeltaUpdateEvent(delta="partial"))
+
+    assert len(live_instances) == 1
+    live = live_instances[0]
+    assert live.options["transient"] is True
+    assert live.options["vertical_overflow"] == "crop"
+    assert live.options["refresh_per_second"] == 4
+    assert live.started_with_refresh is True
+    assert 4 <= live.renderable.height <= 12
+
+    await session._on_event(MessageEndEvent(message=message))
+
+    assert live.stopped
+    assert session._live is None
+    session._console.print.assert_called_once()
+    final_panel = session._console.print.call_args.args[0]
+    assert isinstance(final_panel, Panel)
+    assert final_panel.height is None
 
 
 async def test_turn_usage_is_aggregated_before_display(tmp_path):
