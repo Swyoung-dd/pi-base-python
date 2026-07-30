@@ -22,7 +22,19 @@ def get_provider(provider_id: str) -> BaseProvider | None:
 
 def list_providers() -> list[str]:
     """返回所有已注册的提供商 ID。"""
-    return list(_providers.keys())
+    return sorted(_providers)
+
+
+def register_openai_compatible(
+    provider_id: str,
+    requires_api_key: bool = True,
+) -> BaseProvider:
+    """注册使用 OpenAI Chat Completions 协议的提供商。"""
+    from pi.ai.providers.openai import OpenAIProvider
+
+    provider = OpenAIProvider(provider_id, requires_api_key)
+    register_provider(provider)
+    return provider
 
 
 def _register_builtins() -> None:
@@ -34,6 +46,12 @@ def _register_builtins() -> None:
         register_provider(OpenAIProvider())
     if "anthropic" not in _providers:
         register_provider(AnthropicProvider())
+    for provider_id in ("deepseek", "groq", "mistral", "openrouter", "xai"):
+        if provider_id not in _providers:
+            register_openai_compatible(provider_id)
+    for provider_id in ("lmstudio", "ollama"):
+        if provider_id not in _providers:
+            register_openai_compatible(provider_id, requires_api_key=False)
 
 
 _register_builtins()

@@ -43,15 +43,22 @@ from pi.ai.types import (
 class OpenAIProvider(BaseProvider):
     """OpenAI chat completions 提供商。"""
 
+    def __init__(
+        self,
+        provider_id: str = "openai",
+        requires_api_key: bool = True,
+    ) -> None:
+        self._provider_id = provider_id
+        self._requires_api_key = requires_api_key
+
     @property
     def provider_id(self) -> str:
-        return "openai"
+        return self._provider_id
 
     def build_headers(self, api_key: str, options: StreamOptions | None = None) -> dict[str, str]:
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         return headers
 
     def convert_messages(self, context: Context) -> list[dict[str, Any]]:
@@ -137,13 +144,21 @@ class OpenAIProvider(BaseProvider):
     ) -> EventStream:
         stream_obj = EventStream()
         api_key = self.resolve_api_key(options)
-        if not api_key:
-            await self._emit_error(stream_obj, model, "No API key for provider 'openai'")
+        if not api_key and self._requires_api_key:
+            await self._emit_error(
+                stream_obj,
+                model,
+                f"No API key for provider '{self.provider_id}'",
+            )
             return stream_obj
 
         base_url = model.base_url or "https://api.openai.com/v1"
         url = f"{base_url.rstrip('/')}/chat/completions"
-        headers = self.build_headers(api_key, options)
+        headers = self.merge_headers(
+            self.build_headers(api_key or "", options),
+            model,
+            options,
+        )
 
         payload: dict[str, Any] = {
             "model": model.id,

@@ -44,13 +44,30 @@ class BaseProvider(abc.ABC):
         if options and options.api_key:
             return options.api_key
         from pi.ai.auth import get_api_key
+
         return get_api_key(self.provider_id)
 
-    def build_headers(
-        self, api_key: str, options: StreamOptions | None = None
-    ) -> dict[str, str]:
+    def build_headers(self, api_key: str, options: StreamOptions | None = None) -> dict[str, str]:
         """构建 API 请求的 HTTP 头。由各提供商覆盖。"""
         return {}
+
+    def merge_headers(
+        self,
+        base_headers: dict[str, str],
+        model: Model,
+        options: StreamOptions | None = None,
+    ) -> dict[str, str]:
+        """按模型和调用选项覆盖 headers；值为 None 时删除对应项。"""
+        headers = dict(base_headers)
+        if model.headers:
+            headers.update(model.headers)
+        if options and options.headers:
+            for key, value in options.headers.items():
+                if value is None:
+                    headers.pop(key, None)
+                else:
+                    headers[key] = value
+        return headers
 
     def convert_messages(self, context: Context) -> list[dict[str, Any]]:
         """将 pi 消息转换为提供商特定格式。由各提供商覆盖。"""

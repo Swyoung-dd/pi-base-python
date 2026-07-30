@@ -135,7 +135,7 @@ class AnthropicProvider(BaseProvider):
 
         base_url = model.base_url or "https://api.anthropic.com"
         url = f"{base_url.rstrip('/')}/v1/messages"
-        headers = self.build_headers(api_key, options)
+        headers = self.merge_headers(self.build_headers(api_key, options), model, options)
 
         payload: dict[str, Any] = {
             "model": model.id,
