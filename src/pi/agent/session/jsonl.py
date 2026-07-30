@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from pi.agent.session.base import SessionEntry, SessionStorage
@@ -25,38 +26,31 @@ class JsonlStorage(SessionStorage):
     def _load(self) -> None:
         if not self._path.exists():
             return
-        with open(self._path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
+        lines = self._path.read_text(encoding="utf-8").splitlines()
+        nonempty_indexes = [index for index, line in enumerate(lines) if line.strip()]
+        last_index = nonempty_indexes[-1] if nonempty_indexes else -1
+        for index, line in enumerate(lines):
+            if not line.strip():
+                continue
+            try:
                 data = json.loads(line)
-                entry = SessionEntry(
-                    id=data["id"],
-                    parent_id=data.get("parent_id"),
-                    type=data.get("type", "message"),
-                    message=data.get("message"),
-                    data=data.get("data"),
-                    timestamp=data.get("timestamp", ""),
-                )
-                self._entries[entry.id] = entry
-                self._leaf_id = entry.id
+            except json.JSONDecodeError as exc:
+                if index == last_index:
+                    break
+                raise ValueError(f"会话文件第 {index + 1} 行损坏: {self._path}") from exc
+            entry = SessionEntry.from_dict(data)
+            self._entries[entry.id] = entry
+            self._leaf_id = entry.id
 
     def _write_entry(self, entry: SessionEntry) -> None:
-        data = {
-            "id": entry.id,
-            "parent_id": entry.parent_id,
-            "type": entry.type,
-            "message": entry.message,
-            "data": entry.data,
-            "timestamp": entry.timestamp,
-        }
         with open(self._path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(data, default=str) + "\n")
+            f.write(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
 
     async def append(self, entry: SessionEntry) -> str:
-        self._entries[entry.id] = entry
         self._write_entry(entry)
+        self._entries[entry.id] = entry
         return entry.id
 
     async def get(self, entry_id: str) -> SessionEntry | None:
@@ -77,4 +71,6 @@ class JsonlStorage(SessionStorage):
         return self._leaf_id
 
     async def set_leaf_id(self, entry_id: str) -> None:
+        if entry_id not in self._entries:
+            raise KeyError(f"未知会话条目: {entry_id}")
         self._leaf_id = entry_id

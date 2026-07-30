@@ -34,4 +34,6 @@ class MemoryStorage(SessionStorage):
         return self._leaf_id
 
     async def set_leaf_id(self, entry_id: str) -> None:
+        if entry_id not in self._entries:
+            raise KeyError(f"未知会话条目: {entry_id}")
         self._leaf_id = entry_id

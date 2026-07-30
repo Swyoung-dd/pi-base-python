@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import uuid
 from pathlib import Path
 
 import click
 
 from pi.agent.agent import Agent, AgentOptions
+from pi.agent.session import JsonlStorage
 from pi.agent.types import AgentEvent, AgentTool
 from pi.ai.models import list_models
 from pi.ai.providers.registry import get_provider
@@ -94,12 +96,14 @@ async def run_print_mode(prompt: str, config) -> None:
 
     stream_fn = _make_stream_fn(model)
 
-    agent = Agent(AgentOptions(
-        model=model,
-        system_prompt=system_prompt,
-        tools=tools,
-        stream_fn=stream_fn,
-    ))
+    agent = Agent(
+        AgentOptions(
+            model=model,
+            system_prompt=system_prompt,
+            tools=tools,
+            stream_fn=stream_fn,
+        )
+    )
     agent.subscribe(_print_event)
 
     await agent.prompt(prompt)
@@ -126,12 +130,16 @@ async def run_interactive_mode(config) -> None:
         system_prompt = config.system_prompt + chr(10) + chr(10) + system_prompt
 
     stream_fn = _make_stream_fn(model)
+    session_id = uuid.uuid4().hex
+    session_storage = JsonlStorage(config.sessions_dir / f"{session_id}.jsonl")
 
     session = InteractiveSession(
         model=model,
         system_prompt=system_prompt,
         tools=tools,
         stream_fn=stream_fn,
+        session_id=session_id,
+        session_storage=session_storage,
     )
     await session.run()
 

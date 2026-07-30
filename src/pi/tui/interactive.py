@@ -15,6 +15,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from pi.agent.agent import Agent, AgentOptions
+from pi.agent.session.base import SessionStorage
 from pi.agent.types import AgentEvent, AgentTool
 from pi.ai.types import Model
 
@@ -28,14 +29,20 @@ class InteractiveSession:
         system_prompt: str,
         tools: list[AgentTool],
         stream_fn: Any,
+        session_id: str | None = None,
+        session_storage: SessionStorage | None = None,
     ) -> None:
         self._console = Console()
-        self._agent = Agent(AgentOptions(
-            model=model,
-            system_prompt=system_prompt,
-            tools=tools,
-            stream_fn=stream_fn,
-        ))
+        self._agent = Agent(
+            AgentOptions(
+                model=model,
+                system_prompt=system_prompt,
+                tools=tools,
+                stream_fn=stream_fn,
+                session_id=session_id,
+                session_storage=session_storage,
+            )
+        )
         self._agent.subscribe(self._on_event)
         self._current_text = ""
         self._live: Live | None = None
@@ -78,6 +85,8 @@ class InteractiveSession:
     async def run(self) -> None:
         """运行交互式 REPL 循环。"""
         from pi import __version__
+
+        await self._agent.restore()
 
         self._console.print(
             Panel(Text(f"Pi v{__version__} - coding agent", justify="center"), style="blue")

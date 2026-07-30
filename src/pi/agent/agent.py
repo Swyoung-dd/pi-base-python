@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pi.agent.agent_loop import run_agent_loop
+from pi.agent.session.base import SessionStorage
 from pi.agent.types import (
     AgentAssistantMessage,
     AgentContext,
@@ -53,6 +54,7 @@ class AgentOptions:
     tools: list[AgentTool] = field(default_factory=list)
     stream_fn: StreamFn | None = None
     session_id: str | None = None
+    session_storage: SessionStorage | None = None
     steering_mode: QueueMode = QueueMode.ONE_AT_A_TIME
     follow_up_mode: QueueMode = QueueMode.ONE_AT_A_TIME
     tool_execution: ToolExecutionMode = ToolExecutionMode.PARALLEL
@@ -102,6 +104,8 @@ class Agent:
         self._follow_up_queue = _PendingQueue(options.follow_up_mode)
         self._stream_fn = options.stream_fn
         self._session_id = options.session_id
+        self._session_storage = options.session_storage
+        self._session_loaded = False
         self._tool_execution = options.tool_execution
         self._abort_event = asyncio.Event()
         self._idle_event = asyncio.Event()
@@ -135,6 +139,19 @@ class Agent:
     async def wait_for_idle(self) -> None:
         await self._idle_event.wait()
 
+    async def restore(self) -> None:
+        """从会话存储恢复当前分支的消息。"""
+        if self._session_loaded:
+            return
+        if self._session_storage is not None:
+            branch = await self._session_storage.get_branch()
+            self._state.messages = [
+                entry.message
+                for entry in branch
+                if entry.type == "message" and entry.message is not None
+            ]
+        self._session_loaded = True
+
     def reset(self) -> None:
         self._state.messages.clear()
         self._state.is_streaming = False
@@ -144,6 +161,7 @@ class Agent:
         self.clear_queues()
 
     async def prompt(self, text: str, images: list[ImageContent] | None = None) -> None:
+        await self.restore()
         if self.is_busy:
             raise RuntimeError("Agent is already processing. Use steer() or wait.")
         msg = create_user_message(text, images)
@@ -162,7 +180,7 @@ class Agent:
         self._state.messages.extend(messages)
 
         try:
-            await run_agent_loop(
+            new_messages = await run_agent_loop(
                 prompts=messages,
                 context=AgentContext(
                     system_prompt=self._state.system_prompt,
@@ -177,6 +195,10 @@ class Agent:
                     abort_event=self._abort_event,
                 ),
             )
+            self._state.messages = previous_messages + new_messages
+            if self._session_storage is not None:
+                for message in new_messages:
+                    await self._session_storage.append_message(message)
         except Exception as exc:
             now = int(time.time() * 1000)
             failure = AgentAssistantMessage(
