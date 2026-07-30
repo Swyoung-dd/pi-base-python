@@ -1,80 +1,54 @@
-"""模型注册表与发现。
-
-在 TypeScript 版本中，模型数据由提供商目录自动生成。
-这里使用静态注册表手动维护，后续可添加生成器。
-"""
+"""生成模型、自定义模型的注册与发现。"""
 
 from __future__ import annotations
 
-from pi.ai.types import Model, ModelCost
+from pathlib import Path
 
-# 内置模型定义。
-# 在 pi-ai 中这些由提供商目录自动生成。
-_MODELS: list[Model] = [
-    Model(
-        id="gpt-4o",
-        name="GPT-4o",
-        api="openai-responses",
-        provider="openai",
-        base_url="https://api.openai.com/v1",
-        reasoning=False,
-        input=["text", "image"],
-        cost=ModelCost(input=2.5, output=10.0),
-        context_window=128_000,
-        max_tokens=16_384,
-    ),
-    Model(
-        id="gpt-4o-mini",
-        name="GPT-4o mini",
-        api="openai-responses",
-        provider="openai",
-        base_url="https://api.openai.com/v1",
-        reasoning=False,
-        input=["text", "image"],
-        cost=ModelCost(input=0.15, output=0.6),
-        context_window=128_000,
-        max_tokens=16_384,
-    ),
-    Model(
-        id="claude-sonnet-4-20250514",
-        name="Claude Sonnet 4",
-        api="anthropic-messages",
-        provider="anthropic",
-        base_url="https://api.anthropic.com",
-        reasoning=False,
-        input=["text", "image"],
-        cost=ModelCost(input=3.0, output=15.0),
-        context_window=200_000,
-        max_tokens=16_384,
-    ),
-    Model(
-        id="claude-3-5-haiku-20241022",
-        name="Claude 3.5 Haiku",
-        api="anthropic-messages",
-        provider="anthropic",
-        base_url="https://api.anthropic.com",
-        reasoning=False,
-        input=["text", "image"],
-        cost=ModelCost(input=0.8, output=4.0),
-        context_window=200_000,
-        max_tokens=8_192,
-    ),
-]
+import yaml
+
+from pi.ai.models_generated import MODELS
+from pi.ai.types import Model
+
+_custom_models: dict[tuple[str, str], Model] = {}
+
+
+def register_model(model: Model) -> None:
+    """注册或覆盖一个运行时模型定义。"""
+    _custom_models[(model.provider, model.id)] = model
+
+
+def load_model_file(path: str | Path) -> list[Model]:
+    """从 YAML 文件加载项目级模型定义。"""
+    value = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or []
+    records = value.get("models", []) if isinstance(value, dict) else value
+    models = [Model.model_validate(record) for record in records]
+    for model in models:
+        register_model(model)
+    return models
+
+
+def clear_custom_models() -> None:
+    """清空运行时模型，主要用于隔离嵌入方和测试。"""
+    _custom_models.clear()
 
 
 def list_models() -> list[Model]:
     """返回所有已知模型。"""
-    return list(_MODELS)
+    merged = {(model.provider, model.id): model for model in MODELS}
+    merged.update(_custom_models)
+    return sorted(merged.values(), key=lambda model: (model.provider, model.id))
 
 
-def get_model(model_id: str) -> Model | None:
+def get_model(model_id: str, provider: str | None = None) -> Model | None:
     """按 ID 查找模型。"""
-    for m in _MODELS:
-        if m.id == model_id:
-            return m
-    return None
+    matches = [
+        model
+        for model in list_models()
+        if model.id == model_id and (provider is None or model.provider == provider)
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def models_by_provider(provider: str) -> list[Model]:
     """返回指定提供商的所有模型。"""
-    return [m for m in _MODELS if m.provider == provider]
+    return [model for model in list_models() if model.provider == provider]

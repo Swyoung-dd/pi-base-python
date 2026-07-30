@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from pathlib import Path
 
 import click
@@ -17,7 +16,7 @@ import click
 from pi.agent.agent import Agent, AgentOptions
 from pi.agent.session import JsonlStorage
 from pi.agent.types import AgentEvent, AgentTool
-from pi.ai.models import list_models
+from pi.ai.models import get_model, list_models
 from pi.ai.providers.registry import get_provider
 from pi.ai.types import ModelThinkingLevel
 from pi.coding_agent.config import load_config
@@ -58,6 +57,18 @@ def _make_stream_fn(model):
     return stream_fn
 
 
+def _resolve_model(config):
+    """按配置中的 ID/provider 解析唯一模型。"""
+    model = get_model(config.model, config.provider)
+    if model is not None:
+        return model
+    click.echo(f"Unknown or ambiguous model: {config.model}", err=True)
+    click.echo("Available models:", err=True)
+    for candidate in list_models():
+        click.echo(f"  {candidate.provider}/{candidate.id}", err=True)
+    raise click.ClickException("Model selection failed")
+
+
 def _print_event(event: AgentEvent) -> None:
     """打印模式下将 agent 事件输出到 stdout。"""
     if event.type == "text_delta":
@@ -76,17 +87,7 @@ def _print_event(event: AgentEvent) -> None:
 
 async def run_print_mode(prompt: str, config) -> None:
     """执行一次性提示并打印结果。"""
-    model = None
-    for m in list_models():
-        if m.id == config.model:
-            model = m
-            break
-    if model is None:
-        click.echo(f"Unknown model: {config.model}", err=True)
-        click.echo("Available models:", err=True)
-        for m in list_models():
-            click.echo(f"  {m.id}", err=True)
-        sys.exit(1)
+    model = _resolve_model(config)
 
     cwd = Path.cwd()
     tools = _build_tools(cwd)
@@ -119,14 +120,7 @@ async def run_interactive_mode(
     """运行交互式 REPL 模式。"""
     from pi.tui.interactive import InteractiveSession
 
-    model = None
-    for m in list_models():
-        if m.id == config.model:
-            model = m
-            break
-    if model is None:
-        click.echo(f"Unknown model: {config.model}", err=True)
-        sys.exit(1)
+    model = _resolve_model(config)
 
     cwd = Path.cwd()
     tools = _build_tools(cwd)

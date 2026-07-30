@@ -11,6 +11,8 @@ from pathlib import Path
 
 import yaml
 
+from pi.ai.models import load_model_file
+
 
 @dataclass
 class Config:
@@ -49,6 +51,10 @@ def load_config(config_dir: Path | None = None) -> Config:
             config.temperature = data["temperature"]
         if "thinking_level" in data:
             config.thinking_level = data["thinking_level"]
+
+    models_file = config_dir / "models.yaml"
+    if models_file.exists():
+        load_model_file(models_file)
 
     # 环境变量覆盖
     if env_model := os.environ.get("PI_MODEL"):
