@@ -15,7 +15,7 @@ import click
 
 from pi.agent.agent import Agent, AgentOptions
 from pi.agent.session import JsonlStorage
-from pi.agent.types import AgentEvent, AgentTool
+from pi.agent.types import AgentTool
 from pi.ai.models import get_model, list_models
 from pi.ai.oauth import OAuthEvent, get_default_oauth_store, login_oauth
 from pi.ai.oauth_xai import register_xai_oauth
@@ -23,6 +23,7 @@ from pi.ai.providers.registry import get_provider
 from pi.ai.types import ModelThinkingLevel
 from pi.coding_agent.config import load_config
 from pi.coding_agent.extensions import load_extensions
+from pi.coding_agent.output import PrintRenderer
 from pi.coding_agent.sessions import list_sessions, resolve_session_id, session_path
 from pi.coding_agent.skills import format_skills_for_prompt, load_skills
 from pi.coding_agent.system_prompt import build_system_prompt
@@ -105,23 +106,7 @@ def _resolve_model(config):
     raise click.ClickException("Model selection failed")
 
 
-def _print_event(event: AgentEvent) -> None:
-    """打印模式下将 agent 事件输出到 stdout。"""
-    if event.type == "text_delta":
-        click.echo(event.delta, nl=False)
-    elif event.type == "tool_execution_start":
-        newline = chr(10)
-        click.echo(f"{newline}[tool: {event.tool_name}]", err=True)
-    elif event.type == "tool_execution_end":
-        if event.result and event.result.is_error:
-            for block in event.result.content:
-                if hasattr(block, "text"):
-                    click.echo(f"  [error] {block.text}", err=True)
-    elif event.type == "turn_end" and event.message.error_message:
-        click.echo(f"Error: {event.message.error_message}", err=True)
-
-
-async def run_print_mode(prompt: str, config) -> None:
+async def run_print_mode(prompt: str, config, output_format: str = "text") -> None:
     """执行一次性提示并打印结果。"""
     model = _resolve_model(config)
 
@@ -139,7 +124,7 @@ async def run_print_mode(prompt: str, config) -> None:
             thinking_level=ModelThinkingLevel(config.thinking_level),
         )
     )
-    agent.subscribe(_print_event)
+    agent.subscribe(PrintRenderer(output_format))
 
     await agent.prompt(prompt)
 
@@ -222,6 +207,14 @@ async def print_auth_providers() -> None:
 @click.option("--auth-list", is_flag=True, help="List stored OAuth providers and exit")
 @click.option("--no-skills", is_flag=True, help="Disable skills discovery")
 @click.option(
+    "--output",
+    "output_format",
+    type=click.Choice(["text", "json", "jsonl"]),
+    default="text",
+    show_default=True,
+    help="Print-mode output format",
+)
+@click.option(
     "--thinking",
     type=click.Choice([level.value for level in ModelThinkingLevel]),
     default=None,
@@ -241,6 +234,7 @@ def main(
     logout_provider,
     auth_list,
     no_skills,
+    output_format,
     thinking,
     list_models_flag,
     version,
@@ -278,8 +272,10 @@ def main(
         config.enable_skills = False
 
     if prompt_text is not None:
-        asyncio.run(run_print_mode(prompt_text, config))
+        asyncio.run(run_print_mode(prompt_text, config, output_format))
     else:
+        if output_format != "text":
+            raise click.UsageError("--output json/jsonl requires --prompt")
         asyncio.run(run_interactive_mode(config, session_id, continue_session))
 
 
