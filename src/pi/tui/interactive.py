@@ -39,7 +39,13 @@ from pi.ai.types import Model, ModelThinkingLevel
 from pi.coding_agent.extensions import ExtensionCommand
 from pi.coding_agent.file_references import expand_file_references
 from pi.coding_agent.model_auth import contains_likely_api_key, ensure_model_auth
-from pi.coding_agent.sessions import list_sessions, new_session_id, session_path
+from pi.coding_agent.sessions import (
+    format_session_tree,
+    list_sessions,
+    new_session_id,
+    resolve_entry_id,
+    session_path,
+)
 from pi.coding_agent.skills import Skill
 
 
@@ -117,18 +123,21 @@ class InteractiveSession:
         self._agent_task: asyncio.Task[None] | None = None
         self._sessions_dir = sessions_dir
         self._session_id = session_id
+        self._session_storage = session_storage
         self._commands = commands or {}
         self._skills = {skill.name: skill for skill in skills or []}
         self._credential_store = credential_store or get_default_credential_store()
         self._on_model_selected = on_model_selected
         command_names = [
             "/clear",
+            "/branch",
             "/exit",
             "/help",
             "/model",
             "/new",
             "/resume",
             "/sessions",
+            "/tree",
             "/skill",
             "/steer",
             "/follow-up",
@@ -169,6 +178,7 @@ class InteractiveSession:
         if command == "/help":
             self._console.print(
                 "/new  /resume <id>  /sessions  /model [provider/id]  "
+                "/tree  /branch <entry-id>  "
                 "/skill <name> [task]  /steer <message>  /follow-up <message>  "
                 "/clear  /help  /exit",
                 style="dim",
@@ -212,12 +222,45 @@ class InteractiveSession:
             if not await ensure_model_auth(selected, self._credential_store):
                 return True, False
             self._agent.set_model(selected)
+            if self._session_storage is not None:
+                await self._session_storage.append_model_change(
+                    selected.provider,
+                    selected.id,
+                )
             if self._on_model_selected is not None:
                 self._on_model_selected(selected)
             self._console.print(
                 f"Model: {selected.provider}/{selected.id}",
                 style="dim",
             )
+            return True, False
+        if command == "/tree":
+            if self._session_storage is None:
+                self._console.print("Session storage is disabled.", style="yellow")
+                return True, False
+            entries = await self._session_storage.get_entries()
+            leaf_id = await self._session_storage.get_leaf_id()
+            self._console.print(format_session_tree(entries, leaf_id), style="dim")
+            return True, False
+        if command == "/branch":
+            if self._session_storage is None:
+                self._console.print("Session storage is disabled.", style="yellow")
+                return True, False
+            if not argument:
+                self._console.print("Usage: /branch <entry-id>", style="yellow")
+                return True, False
+            try:
+                entry_id = resolve_entry_id(
+                    await self._session_storage.get_entries(),
+                    argument,
+                )
+                await self._session_storage.branch_from(entry_id)
+            except (KeyError, ValueError) as exc:
+                self._console.print(str(exc), style="red")
+                return True, False
+            await self._agent.switch_session(self._session_storage, self._session_id)
+            await self._restore_session_model()
+            self._console.print(f"Branched from: {entry_id}", style="dim")
             return True, False
         if command == "/skill" or command.startswith("/skill:"):
             if command.startswith("/skill:"):
@@ -278,8 +321,18 @@ class InteractiveSession:
             if command == "/resume" and not path.exists():
                 self._console.print(f"Session not found: {session_id}", style="red")
                 return True, False
-            await self._agent.switch_session(JsonlStorage(path), session_id)
+            storage = JsonlStorage(path)
+            if command == "/new":
+                current_model = self._agent.state.model
+                if current_model is not None:
+                    await storage.append_model_change(
+                        current_model.provider,
+                        current_model.id,
+                    )
+            await self._agent.switch_session(storage, session_id)
+            self._session_storage = storage
             self._session_id = session_id
+            await self._restore_session_model()
             self._console.print(f"Session: {session_id}", style="dim")
             return True, False
         extension_command = self._commands.get(command.lstrip("/"))
@@ -381,11 +434,31 @@ class InteractiveSession:
             )
         return f" {model_name}{context} | session {session} "
 
+    async def _restore_session_model(self) -> None:
+        """恢复当前分支最后记录的模型选择。"""
+        if self._session_storage is None:
+            return
+        selection = await self._session_storage.get_model_selection()
+        if selection is None:
+            return
+        provider, model_id = selection
+        model = next(
+            (
+                candidate
+                for candidate in list_models()
+                if candidate.provider == provider and candidate.id == model_id
+            ),
+            None,
+        )
+        if model is not None:
+            self._agent.set_model(model)
+
     async def run(self) -> None:
         """运行交互式 REPL 循环。"""
         from pi import __version__
 
         await self._agent.restore()
+        await self._restore_session_model()
 
         self._console.print(
             Panel(Text(f"piY v{__version__} - coding agent", justify="center"), style="blue")

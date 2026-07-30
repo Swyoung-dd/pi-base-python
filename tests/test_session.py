@@ -72,3 +72,24 @@ async def test_agent_restores_and_persists_session(tmp_path):
     restored = JsonlStorage(path)
     branch = await restored.get_branch()
     assert [entry.message.role for entry in branch] == ["user", "user", "assistant"]
+
+
+async def test_jsonl_storage_persists_branches_and_model_selection(tmp_path):
+    path = tmp_path / "session.jsonl"
+    storage = JsonlStorage(path)
+    root_id = await storage.append_message(create_user_message("root"))
+    await storage.append_model_change("openai", "gpt-old")
+    await storage.append_message(create_user_message("old branch"))
+
+    await storage.branch_from(root_id)
+    await storage.append_model_change("anthropic", "claude-new")
+    await storage.append_message(create_user_message("new branch"))
+
+    restored = JsonlStorage(path)
+
+    assert [message.content for message in await restored.get_context_messages()] == [
+        "root",
+        "new branch",
+    ]
+    assert await restored.get_model_selection() == ("anthropic", "claude-new")
+    assert len(await restored.get_entries()) == 6

@@ -84,6 +84,11 @@ class SessionStorage(abc.ABC):
         ...
 
     @abc.abstractmethod
+    async def get_entries(self) -> list[SessionEntry]:
+        """按写入顺序获取全部条目。"""
+        ...
+
+    @abc.abstractmethod
     async def get_branch(self) -> list[SessionEntry]:
         """获取从根到当前叶节点的所有条目。"""
         ...
@@ -134,6 +139,42 @@ class SessionStorage(abc.ABC):
         entry_id = await self.append(entry)
         await self.set_leaf_id(entry_id)
         return entry_id
+
+    async def append_model_change(self, provider: str, model_id: str) -> str:
+        """在当前分支记录后续请求使用的模型。"""
+        leaf = await self.get_leaf_id()
+        entry = SessionEntry(
+            parent_id=leaf,
+            type="model_change",
+            data={"provider": provider, "model_id": model_id},
+        )
+        entry_id = await self.append(entry)
+        await self.set_leaf_id(entry_id)
+        return entry_id
+
+    async def branch_from(self, entry_id: str) -> str:
+        """从指定条目创建可持久恢复的新分支。"""
+        if await self.get(entry_id) is None:
+            raise KeyError(f"未知会话条目: {entry_id}")
+        entry = SessionEntry(
+            parent_id=entry_id,
+            type="branch",
+            data={"source_entry_id": entry_id},
+        )
+        branch_id = await self.append(entry)
+        await self.set_leaf_id(branch_id)
+        return branch_id
+
+    async def get_model_selection(self) -> tuple[str, str] | None:
+        """返回当前分支最近一次模型选择。"""
+        for entry in reversed(await self.get_branch()):
+            if entry.type != "model_change" or not entry.data:
+                continue
+            provider = entry.data.get("provider")
+            model_id = entry.data.get("model_id")
+            if isinstance(provider, str) and isinstance(model_id, str):
+                return provider, model_id
+        return None
 
     async def get_context_messages(self) -> list[AgentMessage]:
         """从最近压缩检查点恢复有效上下文，并追加其后的消息。"""

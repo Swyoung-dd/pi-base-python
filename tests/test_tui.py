@@ -1,6 +1,7 @@
 """交互终端状态与命令测试。"""
 
-from pi.agent.types import AgentAssistantMessage
+from pi.agent.session import JsonlStorage
+from pi.agent.types import AgentAssistantMessage, create_user_message
 from pi.ai.models import list_models
 from pi.ai.oauth import CredentialStore, resolve_stored_api_key, save_api_key
 from pi.ai.types import TextContent, Usage
@@ -43,6 +44,73 @@ async def test_model_command_updates_toolbar(tmp_path, monkeypatch):
     assert "test-session" in session._bottom_toolbar()
     assert selected_models == [replacement]
     assert await resolve_stored_api_key(replacement.provider, store) == "new-key"
+
+
+async def test_model_command_is_restored_from_session(tmp_path, monkeypatch):
+    models = list_models()
+    initial = models[0]
+    replacement = models[1]
+    store = CredentialStore(tmp_path / "auth.json")
+    await save_api_key(replacement.provider, "existing-key", store)
+    monkeypatch.setattr(
+        "pi.coding_agent.model_auth._prompt_api_key",
+        lambda message: _empty_api_key(),
+    )
+    storage = JsonlStorage(tmp_path / "session.jsonl")
+    await storage.append_message(create_user_message("hello"))
+    session = InteractiveSession(
+        model=initial,
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        session_id="test-session",
+        session_storage=storage,
+        history_file=tmp_path / "history",
+        credential_store=store,
+    )
+
+    await session._handle_command(f"/model {replacement.provider}/{replacement.id}")
+
+    restored = InteractiveSession(
+        model=initial,
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        session_id="test-session",
+        session_storage=JsonlStorage(tmp_path / "session.jsonl"),
+        history_file=tmp_path / "history",
+        credential_store=store,
+    )
+    await restored._agent.restore()
+    await restored._restore_session_model()
+
+    assert f"{replacement.provider}/{replacement.id}" in restored._bottom_toolbar()
+
+
+async def test_new_session_records_current_model(tmp_path):
+    model = list_models()[0]
+    sessions_dir = tmp_path / "sessions"
+    session = InteractiveSession(
+        model=model,
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        sessions_dir=sessions_dir,
+        history_file=tmp_path / "history",
+    )
+
+    handled, should_exit = await session._handle_command("/new")
+
+    assert handled and not should_exit
+    assert session._session_storage is not None
+    assert await session._session_storage.get_model_selection() == (
+        model.provider,
+        model.id,
+    )
+
+
+async def _empty_api_key():
+    return ""
 
 
 def test_toolbar_shows_context_usage_and_percentage(tmp_path):

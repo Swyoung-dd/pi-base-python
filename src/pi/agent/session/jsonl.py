@@ -56,6 +56,9 @@ class JsonlStorage(SessionStorage):
     async def get(self, entry_id: str) -> SessionEntry | None:
         return self._entries.get(entry_id)
 
+    async def get_entries(self) -> list[SessionEntry]:
+        return list(self._entries.values())
+
     async def get_branch(self) -> list[SessionEntry]:
         if self._leaf_id is None:
             return []

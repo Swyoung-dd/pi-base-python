@@ -164,6 +164,8 @@ async def run_interactive_mode(
         continue_latest=continue_latest,
     )
     session_storage = JsonlStorage(session_path(config.sessions_dir, session_id))
+    if not await session_storage.get_entries():
+        await session_storage.append_model_change(model.provider, model.id)
 
     def persist_model(selected_model) -> None:
         config.model = selected_model.id
