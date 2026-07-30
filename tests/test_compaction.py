@@ -153,3 +153,50 @@ async def test_agent_persists_model_generated_compaction_checkpoint(tmp_path):
     restored_messages = await restored.get_context_messages()
     assert restored_messages == agent.state.messages
     assert (await restored.get_branch())[-1].type == "compaction"
+
+
+async def test_agent_proactive_compact():
+    """主动调用 compact() 压缩上下文并持久化。"""
+    import os
+    import tempfile
+
+    model = Model(id="test-model", name="Test", api="test", provider="test")
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = os.path.join(tmp_dir, "session.jsonl")
+        storage = JsonlStorage(path)
+        for index in range(6):
+            await storage.append_message(create_user_message(f"old-{index} " + "x" * 80))
+            await storage.append_message(_assistant(f"reply-{index} " + "y" * 80, index))
+
+        async def stream_fn(current_model, context, options):
+            stream = EventStream()
+            response = AssistantMessage(
+                content=[TextContent(text="compacted summary")],
+                api=current_model.api,
+                provider=current_model.provider,
+                model=current_model.id,
+                stop_reason=StopReason.STOP,
+                timestamp=99,
+            )
+            await stream.push(DoneEvent(message=response))
+            await stream.end(response)
+            return stream
+
+        agent = Agent(
+            AgentOptions(
+                model=model,
+                stream_fn=stream_fn,
+                session_storage=storage,
+                context_token_limit=500,
+                compact_to_tokens=80,
+            )
+        )
+        await agent.restore()
+        assert len(agent.state.messages) == 12
+
+        result = await agent.compact(target_tokens=80)
+
+        assert result.dropped_messages > 0
+        assert result.messages[0].content.startswith("[已压缩的早期对话]")
+        assert len(agent.state.messages) < 12
+        assert (await storage.get_branch())[-1].type == "compaction"

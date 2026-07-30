@@ -164,6 +164,7 @@ class InteractiveSession:
         reserved_commands = {
             "branch",
             "clear",
+            "compact",
             "exit",
             "follow-up",
             "help",
@@ -189,6 +190,7 @@ class InteractiveSession:
         command_names = [
             "/clear",
             "/branch",
+            "/compact",
             "/exit",
             "/help",
             "/model",
@@ -239,11 +241,42 @@ class InteractiveSession:
             self._console.print(
                 "/new  /resume <id>  /sessions  /model [provider/id]  "
                 "/tree  /branch <entry-id>  "
+                "/compact [target_tokens]  "
                 "/templates  /<template> [arguments]  "
                 "/skill <name> [task]  /steer <message>  /follow-up <message>  "
                 "/clear  /help  /exit",
                 style=self._theme.muted,
             )
+            return True, False
+        if command == "/compact":
+            if self._agent.is_busy:
+                self._console.print("Agent is busy. Wait for idle.", style=self._theme.warning)
+                return True, False
+            target: int | None = None
+            if argument:
+                try:
+                    target = int(argument)
+                except ValueError:
+                    self._console.print(
+                        f"Invalid token count: {argument}", style=self._theme.error
+                    )
+                    return True, False
+            try:
+                result = await self._agent.compact(target)
+            except RuntimeError as exc:
+                self._console.print(str(exc), style=self._theme.error)
+                return True, False
+            if result.dropped_messages > 0:
+                self._console.print(
+                    f"Compacted: {result.original_tokens} -> {result.compacted_tokens} tokens "
+                    f"({result.dropped_messages} messages dropped)",
+                    style=self._theme.muted,
+                )
+            else:
+                self._console.print(
+                    f"No compaction needed ({result.original_tokens} tokens)",
+                    style=self._theme.muted,
+                )
             return True, False
         if command == "/templates":
             if not self._prompt_templates:

@@ -18,6 +18,7 @@ from pi.agent.compaction import (
     apply_compaction_summary,
     compact_messages,
     estimate_context_tokens,
+    estimate_context_tokens_with_overhead,
     format_messages_for_summary,
     prepare_compaction,
 )
@@ -130,10 +131,16 @@ class Agent:
     """
 
     def __init__(self, options: AgentOptions) -> None:
+        tools = options.tools[:]
+        # 自动注入 compact 工具，允许 AI 主动压缩上下文
+        if not any(t.name == "compact" for t in tools):
+            from pi.coding_agent.tools.compact import create_compact_tool
+
+            tools.append(create_compact_tool(lambda: self))
         self._state = AgentState(
             system_prompt=options.system_prompt,
             model=options.model,
-            tools=options.tools[:],
+            tools=tools,
             thinking_level=options.thinking_level.value,
         )
         self._listeners: list[AgentListener] = []
@@ -187,6 +194,53 @@ class Agent:
             context_window=model.context_window,
             percent=tokens / model.context_window * 100,
         )
+
+    async def compact(self, target_tokens: int | None = None) -> CompactionResult:
+        """主动触发上下文压缩，可在任意时刻调用。
+
+        Args:
+            target_tokens: 压缩目标 token 数。默认使用 compact_to_tokens
+                或 context_token_limit * 3/4。
+
+        Returns:
+            CompactionResult 包含压缩后的消息列表与统计信息。
+
+        Raises:
+            RuntimeError: 当 Agent 正在处理时抛出。
+        """
+        if self.is_busy:
+            raise RuntimeError("Agent is busy. Wait for idle before compacting.")
+        await self.restore()
+        messages = self._state.messages
+        if not messages:
+            return CompactionResult(
+                messages=[],
+                original_tokens=0,
+                compacted_tokens=0,
+                dropped_messages=0,
+            )
+        model = self._state.model
+        limit = self._context_token_limit
+        if target_tokens is None:
+            target_tokens = self._compact_to_tokens or (
+                (limit * 3 // 4) if limit else (model.context_window * 3 // 4) if model and model.context_window else len(messages) * 50
+            )
+        estimated = estimate_context_tokens_with_overhead(
+            messages,
+            self._state.system_prompt,
+            self._state.tools,
+        )
+        result = await self._compact_with_model(messages, target_tokens, estimated)
+        self._state.messages = result.messages
+        if self._session_storage is not None and result.dropped_messages > 0:
+            await self._session_storage.append_compaction(
+                result.messages,
+                result.original_tokens,
+                result.compacted_tokens,
+                result.dropped_messages,
+                result.usage,
+            )
+        return result
 
     def subscribe(self, listener: AgentListener) -> Callable[[], None]:
         self._listeners.append(listener)
