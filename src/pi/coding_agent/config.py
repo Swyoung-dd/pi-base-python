@@ -26,6 +26,8 @@ class Config:
     thinking_level: str = "off"
     extension_paths: list[Path] = field(default_factory=list)
     enable_entrypoint_extensions: bool = False
+    skill_paths: list[Path] = field(default_factory=list)
+    enable_skills: bool = True
     config_dir: Path = field(default_factory=lambda: Path.cwd() / ".pi")
     sessions_dir: Path = field(default_factory=lambda: Path.cwd() / ".pi" / "sessions")
 
@@ -60,6 +62,13 @@ def load_config(config_dir: Path | None = None) -> Config:
             ]
         if "enable_entrypoint_extensions" in data:
             config.enable_entrypoint_extensions = bool(data["enable_entrypoint_extensions"])
+        if "skills" in data:
+            config.skill_paths = [
+                (config_dir / path).resolve() if not Path(path).is_absolute() else Path(path)
+                for path in data["skills"]
+            ]
+        if "enable_skills" in data:
+            config.enable_skills = bool(data["enable_skills"])
 
     models_file = config_dir / "models.yaml"
     if models_file.exists():

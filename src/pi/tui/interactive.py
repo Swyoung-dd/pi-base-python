@@ -23,6 +23,7 @@ from pi.agent.types import AgentEvent, AgentTool
 from pi.ai.types import Model, ModelThinkingLevel
 from pi.coding_agent.extensions import ExtensionCommand
 from pi.coding_agent.sessions import list_sessions, new_session_id, session_path
+from pi.coding_agent.skills import Skill
 
 
 class InteractiveSession:
@@ -39,6 +40,7 @@ class InteractiveSession:
         sessions_dir: Path | None = None,
         thinking_level: ModelThinkingLevel = ModelThinkingLevel.OFF,
         commands: dict[str, ExtensionCommand] | None = None,
+        skills: list[Skill] | None = None,
     ) -> None:
         self._console = Console()
         self._agent = Agent(
@@ -58,6 +60,7 @@ class InteractiveSession:
         self._live: Live | None = None
         self._sessions_dir = sessions_dir
         self._commands = commands or {}
+        self._skills = {skill.name: skill for skill in skills or []}
 
     def _update_live(self) -> None:
         if self._live is None:
@@ -81,9 +84,30 @@ class InteractiveSession:
             return True, False
         if command == "/help":
             self._console.print(
-                "/new  /resume <id>  /sessions  /clear  /help  /exit",
+                "/new  /resume <id>  /sessions  /skill <name> [task]  /clear  /help  /exit",
                 style="dim",
             )
+            return True, False
+        if command == "/skill" or command.startswith("/skill:"):
+            if command.startswith("/skill:"):
+                skill_name = command.split(":", 1)[1]
+                skill_argument = argument
+            else:
+                skill_parts = argument.split(maxsplit=1)
+                skill_name = skill_parts[0] if skill_parts else ""
+                skill_argument = skill_parts[1] if len(skill_parts) > 1 else ""
+            if not skill_name:
+                self._console.print("  ".join(sorted(self._skills)) or "No skills.", style="dim")
+                return True, False
+            skill = self._skills.get(skill_name)
+            if skill is None:
+                self._console.print(f"Skill not found: {skill_name}", style="red")
+                return True, False
+            prompt = (
+                f"Apply the following skill instructions.\n\n{skill.read()}"
+                f"\n\nTask:\n{skill_argument or 'Follow the skill instructions.'}"
+            )
+            await self._agent.prompt(prompt)
             return True, False
         if command == "/sessions":
             if self._sessions_dir is None:

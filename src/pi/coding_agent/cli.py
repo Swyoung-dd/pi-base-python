@@ -24,6 +24,7 @@ from pi.ai.types import ModelThinkingLevel
 from pi.coding_agent.config import load_config
 from pi.coding_agent.extensions import load_extensions
 from pi.coding_agent.sessions import list_sessions, resolve_session_id, session_path
+from pi.coding_agent.skills import format_skills_for_prompt, load_skills
 from pi.coding_agent.system_prompt import build_system_prompt
 from pi.coding_agent.tools import (
     create_bash_tool,
@@ -57,9 +58,27 @@ async def _build_runtime(config, cwd: Path):
     tool_names = [tool.name for tool in tools]
     if len(tool_names) != len(set(tool_names)):
         raise click.ClickException("Extension tool name conflicts with a built-in tool")
+    skills = []
+    if config.enable_skills:
+        skill_paths = [
+            Path.home() / ".pi" / "skills",
+            config.config_dir / "skills",
+            *config.skill_paths,
+        ]
+        skills = load_skills([path for path in skill_paths if path.exists()])
     system_prompt = build_system_prompt(cwd, tool_names)
-    sections = [config.system_prompt, *extensions.system_prompt_sections, system_prompt]
-    return tools, "\n\n".join(section for section in sections if section), extensions.commands
+    sections = [
+        config.system_prompt,
+        *extensions.system_prompt_sections,
+        system_prompt,
+        format_skills_for_prompt(skills),
+    ]
+    return (
+        tools,
+        "\n\n".join(section for section in sections if section),
+        extensions.commands,
+        skills,
+    )
 
 
 def _make_stream_fn(model):
@@ -107,7 +126,7 @@ async def run_print_mode(prompt: str, config) -> None:
     model = _resolve_model(config)
 
     cwd = Path.cwd()
-    tools, system_prompt, _ = await _build_runtime(config, cwd)
+    tools, system_prompt, _, _ = await _build_runtime(config, cwd)
 
     stream_fn = _make_stream_fn(model)
 
@@ -136,7 +155,7 @@ async def run_interactive_mode(
     model = _resolve_model(config)
 
     cwd = Path.cwd()
-    tools, system_prompt, commands = await _build_runtime(config, cwd)
+    tools, system_prompt, commands, skills = await _build_runtime(config, cwd)
 
     stream_fn = _make_stream_fn(model)
     session_id = await resolve_session_id(
@@ -156,6 +175,7 @@ async def run_interactive_mode(
         sessions_dir=config.sessions_dir,
         thinking_level=ModelThinkingLevel(config.thinking_level),
         commands=commands,
+        skills=skills,
     )
     await session.run()
 
@@ -200,6 +220,7 @@ async def print_auth_providers() -> None:
 @click.option("--login", "login_provider", default=None, help="Login to an OAuth provider")
 @click.option("--logout", "logout_provider", default=None, help="Remove stored OAuth credentials")
 @click.option("--auth-list", is_flag=True, help="List stored OAuth providers and exit")
+@click.option("--no-skills", is_flag=True, help="Disable skills discovery")
 @click.option(
     "--thinking",
     type=click.Choice([level.value for level in ModelThinkingLevel]),
@@ -219,6 +240,7 @@ def main(
     login_provider,
     logout_provider,
     auth_list,
+    no_skills,
     thinking,
     list_models_flag,
     version,
@@ -252,6 +274,8 @@ def main(
         config.model = model_id
     if thinking:
         config.thinking_level = thinking
+    if no_skills:
+        config.enable_skills = False
 
     if prompt_text is not None:
         asyncio.run(run_print_mode(prompt_text, config))
