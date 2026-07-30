@@ -28,6 +28,7 @@ class Config:
     enable_entrypoint_extensions: bool = False
     skill_paths: list[Path] = field(default_factory=list)
     enable_skills: bool = True
+    enable_context_files: bool = True
     is_configured: bool = False
     config_dir: Path = field(default_factory=lambda: Path.cwd() / ".piy")
     sessions_dir: Path = field(default_factory=lambda: Path.cwd() / ".piy" / "sessions")
@@ -74,6 +75,8 @@ def load_config(
             ]
         if project_trusted and "enable_skills" in data:
             config.enable_skills = bool(data["enable_skills"])
+        if "enable_context_files" in data:
+            config.enable_context_files = bool(data["enable_context_files"])
 
     models_file = config_dir / "models.yaml"
     if project_trusted and models_file.exists():

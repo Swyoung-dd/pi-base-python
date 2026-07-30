@@ -49,6 +49,7 @@ def test_default_config_uses_piy_directory_and_environment(tmp_path, monkeypatch
     assert config.model == "configured-model"
     assert config.provider == "configured-provider"
     assert config.thinking_level == "high"
+    assert config.enable_context_files
 
 
 def test_agent_model_switch_updates_context_limit():

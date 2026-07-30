@@ -22,6 +22,7 @@ from pi.ai.oauth_xai import register_xai_oauth
 from pi.ai.providers.registry import get_provider
 from pi.ai.types import ModelThinkingLevel
 from pi.coding_agent.config import load_config, save_config
+from pi.coding_agent.context_files import format_context_files, load_context_files
 from pi.coding_agent.extensions import load_extensions
 from pi.coding_agent.file_references import expand_file_references
 from pi.coding_agent.output import PrintRenderer
@@ -74,10 +75,14 @@ async def _build_runtime(config, cwd: Path):
         ]
         skills = load_skills([path for path in skill_paths if path.exists()])
     system_prompt = build_system_prompt(cwd, tool_names)
+    context_files = (
+        format_context_files(load_context_files(cwd)) if config.enable_context_files else ""
+    )
     sections = [
         config.system_prompt,
         *extensions.system_prompt_sections,
         system_prompt,
+        context_files,
         format_skills_for_prompt(skills),
     ]
     return (
@@ -223,6 +228,7 @@ async def print_auth_providers() -> None:
 @click.option("--logout", "logout_provider", default=None, help="Remove stored credentials")
 @click.option("--auth-list", is_flag=True, help="List stored credentials and exit")
 @click.option("--no-skills", is_flag=True, help="Disable skills discovery")
+@click.option("--no-context-files", is_flag=True, help="Disable AGENTS.md/CLAUDE.md discovery")
 @click.option("--setup", "setup_config", is_flag=True, help="Run model setup and exit")
 @click.option(
     "--approve/--no-approve",
@@ -258,6 +264,7 @@ def main(
     logout_provider,
     auth_list,
     no_skills,
+    no_context_files,
     setup_config,
     project_trust,
     output_format,
@@ -316,6 +323,8 @@ def main(
         config.thinking_level = thinking
     if no_skills:
         config.enable_skills = False
+    if no_context_files:
+        config.enable_context_files = False
 
     if prompt_text is not None:
         asyncio.run(run_print_mode(prompt_text, config, output_format))
