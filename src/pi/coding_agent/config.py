@@ -33,7 +33,10 @@ class Config:
     sessions_dir: Path = field(default_factory=lambda: Path.cwd() / ".piy" / "sessions")
 
 
-def load_config(config_dir: Path | None = None) -> Config:
+def load_config(
+    config_dir: Path | None = None,
+    project_trusted: bool = True,
+) -> Config:
     """从 .piy/config.yaml 加载配置，回退到默认值。"""
     if config_dir is None:
         config_dir = Path.cwd() / ".piy"
@@ -49,7 +52,7 @@ def load_config(config_dir: Path | None = None) -> Config:
             config.model = data["model"]
         if "provider" in data:
             config.provider = data["provider"]
-        if "system_prompt" in data:
+        if project_trusted and "system_prompt" in data:
             config.system_prompt = data["system_prompt"]
         if "max_tokens" in data:
             config.max_tokens = data["max_tokens"]
@@ -57,23 +60,23 @@ def load_config(config_dir: Path | None = None) -> Config:
             config.temperature = data["temperature"]
         if "thinking_level" in data:
             config.thinking_level = data["thinking_level"]
-        if "extensions" in data:
+        if project_trusted and "extensions" in data:
             config.extension_paths = [
                 (config_dir / path).resolve() if not Path(path).is_absolute() else Path(path)
                 for path in data["extensions"]
             ]
-        if "enable_entrypoint_extensions" in data:
+        if project_trusted and "enable_entrypoint_extensions" in data:
             config.enable_entrypoint_extensions = bool(data["enable_entrypoint_extensions"])
-        if "skills" in data:
+        if project_trusted and "skills" in data:
             config.skill_paths = [
                 (config_dir / path).resolve() if not Path(path).is_absolute() else Path(path)
                 for path in data["skills"]
             ]
-        if "enable_skills" in data:
+        if project_trusted and "enable_skills" in data:
             config.enable_skills = bool(data["enable_skills"])
 
     models_file = config_dir / "models.yaml"
-    if models_file.exists():
+    if project_trusted and models_file.exists():
         load_model_file(models_file)
 
     # 环境变量覆盖

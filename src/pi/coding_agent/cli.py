@@ -25,6 +25,10 @@ from pi.coding_agent.config import load_config, save_config
 from pi.coding_agent.extensions import load_extensions
 from pi.coding_agent.file_references import expand_file_references
 from pi.coding_agent.output import PrintRenderer
+from pi.coding_agent.project_trust import (
+    has_protected_project_resources,
+    resolve_project_trust,
+)
 from pi.coding_agent.sessions import list_sessions, resolve_session_id, session_path
 from pi.coding_agent.setup import run_setup
 from pi.coding_agent.skills import format_skills_for_prompt, load_skills
@@ -86,6 +90,7 @@ async def _build_runtime(config, cwd: Path):
 
 def _make_stream_fn():
     """创建按当前模型动态选择 provider 的 stream 函数。"""
+
     async def stream_fn(m, ctx, options):
         provider = get_provider(m.provider)
         if provider is None:
@@ -220,6 +225,12 @@ async def print_auth_providers() -> None:
 @click.option("--no-skills", is_flag=True, help="Disable skills discovery")
 @click.option("--setup", "setup_config", is_flag=True, help="Run model setup and exit")
 @click.option(
+    "--approve/--no-approve",
+    "project_trust",
+    default=None,
+    help="Allow or ignore project-local executable resources",
+)
+@click.option(
     "--output",
     "output_format",
     type=click.Choice(["text", "json", "jsonl"]),
@@ -248,6 +259,7 @@ def main(
     auth_list,
     no_skills,
     setup_config,
+    project_trust,
     output_format,
     thinking,
     list_models_flag,
@@ -265,7 +277,20 @@ def main(
             click.echo(f"{m.id:40s}  {m.name}  ({m.provider})")
         return
 
-    config = load_config()
+    project_dir = Path.cwd().resolve()
+    config_dir = project_dir / ".piy"
+    trusted = resolve_project_trust(
+        project_dir,
+        config_dir,
+        project_trust,
+        click.get_text_stream("stdin").isatty(),
+    )
+    if not trusted and has_protected_project_resources(config_dir):
+        click.echo(
+            "Ignoring untrusted project resources. Use --approve to allow them for this run.",
+            err=True,
+        )
+    config = load_config(config_dir, project_trusted=trusted)
     if login_provider:
         asyncio.run(oauth_login(login_provider))
         return

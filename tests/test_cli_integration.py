@@ -65,7 +65,10 @@ def setup(context):
         )
 
         try:
-            result = runner.invoke(main, ["-p", "hello", "--output", "json"])
+            result = runner.invoke(
+                main,
+                ["-p", "hello", "--output", "json", "--approve"],
+            )
         finally:
             clear_custom_models()
 
