@@ -1,0 +1,40 @@
+# Pi Python
+
+Pi agent harness 的 Python 实现，提供多 LLM provider、流式响应、工具调用、会话恢复、上下文压缩、Skills、扩展和交互式终端。
+
+## 安装
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+Python 版本要求为 3.12 或更高。
+
+## 配置
+
+通过环境变量提供凭据，例如 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`，然后运行：
+
+```bash
+pi --setup
+pi
+```
+
+项目配置位于 `.pi/config.yaml`。自定义模型可写入 `.pi/models.yaml`。
+
+## 命令
+
+```bash
+pi --help
+pi --list-models
+pi -p "Summarize @README.md" --output json
+python -m pi --version
+```
+
+## 开发检查
+
+```bash
+python -m ruff check src tests scripts
+python scripts/generate_models.py --check
+python -m pytest -q
+python -m build
+```
