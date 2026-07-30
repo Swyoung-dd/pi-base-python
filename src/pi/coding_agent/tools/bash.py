@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
+import subprocess
 
 from pi.agent.tools.base import ToolContext, truncate_output
 from pi.agent.types import AgentTool, AgentToolCall, AgentToolResult
@@ -28,27 +31,50 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
     command = call.arguments.get("command", "")
     timeout = call.arguments.get("timeout", 120)
 
+    if not isinstance(command, str) or not command.strip():
+        return AgentToolResult(
+            tool_call_id=call.id,
+            tool_name="bash",
+            content=[TextContent(text="Command must be a non-empty string")],
+            is_error=True,
+        )
+    if not isinstance(timeout, int | float) or not 0 < timeout <= 3600:
+        return AgentToolResult(
+            tool_call_id=call.id,
+            tool_name="bash",
+            content=[TextContent(text="Timeout must be between 0 and 3600 seconds")],
+            is_error=True,
+        )
+
     cwd = str(ctx.cwd) if ctx else None
 
     try:
+        process_options = (
+            {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+            if os.name == "nt"
+            else {"start_new_session": True}
+        )
         proc = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
+            **process_options,
         )
 
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except TimeoutError:
-            proc.kill()
-            await proc.wait()
+            await _terminate_process_tree(proc)
             return AgentToolResult(
                 tool_call_id=call.id,
                 tool_name="bash",
                 content=[TextContent(text=f"Command timed out after {timeout}s")],
                 is_error=True,
             )
+        except asyncio.CancelledError:
+            await _terminate_process_tree(proc)
+            raise
 
         output_parts = []
         if stdout:
@@ -64,6 +90,7 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
             content=[TextContent(text=truncate_output("\n".join(output_parts)))],
             is_error=is_error,
         )
+
     except Exception as exc:
         return AgentToolResult(
             tool_call_id=call.id,
@@ -71,6 +98,33 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
             content=[TextContent(text=f"Error executing command: {exc}")],
             is_error=True,
         )
+
+
+async def _terminate_process_tree(proc: asyncio.subprocess.Process) -> None:
+    """终止 shell 及其派生进程，避免超时或取消后遗留后台任务。"""
+    if proc.returncode is not None:
+        return
+    if os.name == "nt":
+        killer = await asyncio.create_subprocess_exec(
+            "taskkill",
+            "/PID",
+            str(proc.pid),
+            "/T",
+            "/F",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await killer.wait()
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5)
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
 
 
 def create_bash_tool() -> AgentTool:

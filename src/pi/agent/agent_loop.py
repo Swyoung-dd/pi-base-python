@@ -355,6 +355,7 @@ async def run_agent_loop(
                 ToolExecutionStartEvent(
                     tool_call_id=tool_call.id,
                     tool_name=tool_call.name,
+                    arguments=tool_call.arguments,
                 )
             )
             abort_event = options.abort_event if options else None

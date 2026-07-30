@@ -1,5 +1,7 @@
 """编码工具测试。"""
 
+import asyncio
+import sys
 import tempfile
 from pathlib import Path
 
@@ -94,3 +96,37 @@ async def test_bash():
     result = await bash_tool.execute(call, None)
     assert not result.is_error
     assert "hello" in result.content[0].text
+
+
+@pytest.mark.asyncio
+async def test_bash_timeout_terminates_process_tree():
+    bash_tool = create_bash_tool()
+    command = f'"{sys.executable}" -c "import time; time.sleep(5)"'
+    call = AgentToolCall(
+        id="timeout",
+        name="bash",
+        arguments={"command": command, "timeout": 0.1},
+    )
+
+    result = await asyncio.wait_for(bash_tool.execute(call, None), timeout=3)
+
+    assert result.is_error
+    assert "timed out" in result.content[0].text
+
+
+@pytest.mark.asyncio
+async def test_bash_cancellation_terminates_process_tree():
+    bash_tool = create_bash_tool()
+    command = f'"{sys.executable}" -c "import time; time.sleep(5)"'
+    call = AgentToolCall(
+        id="cancel",
+        name="bash",
+        arguments={"command": command},
+    )
+    task = asyncio.create_task(bash_tool.execute(call, None))
+    await asyncio.sleep(0.1)
+
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=3)

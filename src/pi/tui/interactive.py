@@ -64,6 +64,33 @@ def _format_tokens(tokens: int) -> str:
     return f"{round(tokens / 1_000_000)}m"
 
 
+def _format_tool_display(tool_name: str, arguments: dict) -> str:
+    """根据工具名称和参数提取有意义的简短描述。"""
+    path = arguments.get("path", "")
+    pattern = arguments.get("pattern", "")
+    command = arguments.get("command", "")
+
+    if tool_name == "bash":
+        return f"bash: {command}" if command else "bash"
+    elif tool_name == "read":
+        return f"read: {path}" if path else "read"
+    elif tool_name == "write":
+        return f"write: {path}" if path else "write"
+    elif tool_name == "edit":
+        return f"edit: {path}" if path else "edit"
+    elif tool_name == "ls":
+        return f"ls: {path}" if path else "ls"
+    elif tool_name == "find":
+        suffix = f": {pattern}" if pattern else ""
+        dir_info = f" in {path}" if path and path != "." else ""
+        return f"find{suffix}{dir_info}"
+    elif tool_name == "grep":
+        suffix = f": /{pattern}/" if pattern else ""
+        return f"grep{suffix}"
+    else:
+        return tool_name
+
+
 class _SafeFileHistory(FileHistory):
     """过滤疑似 API Key，避免凭据落入磁盘输入历史。"""
 
@@ -453,7 +480,8 @@ class InteractiveSession:
                 self._live = None
             self._current_text = ""
             self._current_thinking = ""
-            self._console.print(f"  -> {event.tool_name}", style=self._theme.muted)
+            label = _format_tool_display(event.tool_name, event.arguments)
+            self._console.print(f"  -> {label}", style=self._theme.muted)
         elif event.type == "tool_execution_end":
             if event.result and event.result.is_error:
                 for block in event.result.content:

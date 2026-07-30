@@ -190,6 +190,7 @@ class ToolExecutionStartEvent:
     type: Literal["tool_execution_start"] = "tool_execution_start"
     tool_call_id: str = ""
     tool_name: str = ""
+    arguments: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

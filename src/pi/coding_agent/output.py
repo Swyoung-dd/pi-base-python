@@ -69,7 +69,10 @@ class PrintRenderer:
         if event.type == "text_delta":
             click.echo(event.delta, nl=False)
         elif event.type == "tool_execution_start":
-            click.echo(f"\n[tool: {event.tool_name}]", err=True)
+            from pi.tui.interactive import _format_tool_display
+
+            label = _format_tool_display(event.tool_name, event.arguments)
+            click.echo(f"\n[tool: {label}]", err=True)
         elif event.type == "tool_execution_end" and event.result and event.result.is_error:
             for block in event.result.content:
                 if hasattr(block, "text"):
