@@ -24,11 +24,21 @@ class _FakeResponse:
 
     async def aiter_lines(self):
         lines = [
-            'data: {"type":"message_start","message":{"usage":{"input_tokens":3}}}',
-            'data: {"type":"content_block_delta","delta":{"type":"thinking_delta",'
+            'data: {"type":"message_start","message":{"usage":{"input_tokens":3,'
+            '"cache_read_input_tokens":4,"cache_creation_input_tokens":5}}}',
+            'data: {"type":"content_block_start","index":0,"content_block":'
+            '{"type":"thinking","thinking":""}}',
+            'data: {"type":"content_block_delta","index":0,"delta":'
+            '{"type":"thinking_delta",'
             '"thinking":"plan"}}',
-            'data: {"type":"content_block_delta","delta":{"type":"text_delta",'
+            'data: {"type":"content_block_delta","index":0,"delta":'
+            '{"type":"signature_delta","signature":"sig"}}',
+            'data: {"type":"content_block_stop","index":0}',
+            'data: {"type":"content_block_start","index":1,"content_block":'
+            '{"type":"text","text":""}}',
+            'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta",'
             '"text":"done"}}',
+            'data: {"type":"content_block_stop","index":1}',
             'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},'
             '"usage":{"output_tokens":2}}',
             'data: {"type":"message_stop"}',
@@ -74,5 +84,9 @@ async def test_anthropic_sse_produces_thinking_text_and_usage(monkeypatch):
     ]
     message = events[-1].message
     assert message.content[0].thinking == "plan"
+    assert message.content[0].thinking_signature == "sig"
     assert message.content[1].text == "done"
-    assert message.usage.total_tokens == 5
+    assert message.usage.input == 3
+    assert message.usage.cache_read == 4
+    assert message.usage.cache_write == 5
+    assert message.usage.total_tokens == 14

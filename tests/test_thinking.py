@@ -149,3 +149,38 @@ def test_deepseek_preserves_reasoning_content_for_tool_results():
     assert messages[0]["reasoning_content"] == "需要读取文件"
     assert messages[0]["tool_calls"][0]["id"] == "call-1"
     assert messages[1]["tool_call_id"] == "call-1"
+
+
+def test_anthropic_preserves_signed_and_redacted_thinking_blocks():
+    provider = anthropic.AnthropicProvider()
+    context = Context(
+        messages=[
+            AssistantMessage(
+                content=[
+                    ThinkingContent(
+                        thinking="visible reasoning",
+                        thinking_signature="signature",
+                    ),
+                    ThinkingContent(thinking="encrypted", redacted=True),
+                    TextContent(text="answer"),
+                ],
+                api="anthropic-messages",
+                provider="anthropic",
+                model="claude-test",
+                stop_reason=StopReason.STOP,
+                timestamp=1,
+            )
+        ]
+    )
+
+    messages = provider.convert_messages(context)
+
+    assert messages[0]["content"] == [
+        {
+            "type": "thinking",
+            "thinking": "visible reasoning",
+            "signature": "signature",
+        },
+        {"type": "redacted_thinking", "data": "encrypted"},
+        {"type": "text", "text": "answer"},
+    ]

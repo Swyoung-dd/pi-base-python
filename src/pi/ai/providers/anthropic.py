@@ -80,7 +80,17 @@ class AnthropicProvider(BaseProvider):
             elif isinstance(msg, AssistantMessage):
                 blocks: list[dict[str, Any]] = []
                 for block in msg.content:
-                    if isinstance(block, TextContent):
+                    if isinstance(block, ThinkingContent) and block.redacted:
+                        blocks.append({"type": "redacted_thinking", "data": block.thinking})
+                    elif isinstance(block, ThinkingContent) and block.thinking_signature:
+                        blocks.append(
+                            {
+                                "type": "thinking",
+                                "thinking": block.thinking,
+                                "signature": block.thinking_signature,
+                            }
+                        )
+                    elif isinstance(block, TextContent):
                         blocks.append({"type": "text", "text": block.text})
                     elif isinstance(block, ToolCall):
                         blocks.append(
@@ -206,10 +216,7 @@ async def _stream_anthropic(
     timeout: float,
 ) -> None:
     now = int(time.time() * 1000)
-    text_parts: list[str] = []
-    thinking_parts: list[str] = []
-    tool_calls: list[dict[str, Any]] = []
-    current_tool: dict[str, Any] | None = None
+    content_blocks: dict[int, dict[str, Any]] = {}
     usage = Usage()
     stop_reason = StopReason.STOP
 
@@ -223,7 +230,7 @@ async def _stream_anthropic(
     await stream_obj.push(StartEvent(partial=partial))
 
     async def request_once() -> None:
-        nonlocal current_tool, stop_reason
+        nonlocal stop_reason
         async with (
             httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client,
             client.stream("POST", url, headers=headers, json=payload) as response,
@@ -237,33 +244,68 @@ async def _stream_anthropic(
                 event_type = data.get("type", "")
 
                 if event_type == "content_block_start":
+                    index = data.get("index", len(content_blocks))
                     block = data.get("content_block", {})
-                    if block.get("type") == "tool_use":
-                        current_tool = {
+                    block_type = block.get("type")
+                    if block_type == "tool_use":
+                        content_blocks[index] = {
+                            "type": "tool_use",
                             "id": block.get("id", ""),
                             "name": block.get("name", ""),
                             "args": "",
                         }
+                    elif block_type == "thinking":
+                        content_blocks[index] = {
+                            "type": "thinking",
+                            "thinking": block.get("thinking", ""),
+                            "signature": block.get("signature", ""),
+                        }
+                    elif block_type == "redacted_thinking":
+                        content_blocks[index] = {
+                            "type": "redacted_thinking",
+                            "data": block.get("data", ""),
+                        }
+                    elif block_type == "text":
+                        content_blocks[index] = {
+                            "type": "text",
+                            "text": block.get("text", ""),
+                        }
                 elif event_type == "content_block_delta":
+                    index = data.get("index", 0)
                     delta = data.get("delta", {})
                     if delta.get("type") == "thinking_delta":
                         thinking = delta.get("thinking", "")
-                        thinking_parts.append(thinking)
-                        await stream_obj.push(ThinkingDeltaEvent(content_index=0, delta=thinking))
+                        block = content_blocks.setdefault(
+                            index,
+                            {"type": "thinking", "thinking": "", "signature": ""},
+                        )
+                        block["thinking"] += thinking
+                        await stream_obj.push(
+                            ThinkingDeltaEvent(content_index=index, delta=thinking)
+                        )
+                    elif delta.get("type") == "signature_delta":
+                        block = content_blocks.setdefault(
+                            index,
+                            {"type": "thinking", "thinking": "", "signature": ""},
+                        )
+                        block["signature"] += delta.get("signature", "")
                     elif delta.get("type") == "text_delta":
-                        text_parts.append(delta["text"])
-                        await stream_obj.push(TextDeltaEvent(content_index=0, delta=delta["text"]))
-                    elif delta.get("type") == "input_json_delta" and current_tool is not None:
-                        current_tool["args"] += delta.get("partial_json", "")
+                        block = content_blocks.setdefault(index, {"type": "text", "text": ""})
+                        block["text"] += delta.get("text", "")
+                        await stream_obj.push(
+                            TextDeltaEvent(content_index=index, delta=delta.get("text", ""))
+                        )
+                    elif delta.get("type") == "input_json_delta":
+                        block = content_blocks.get(index)
+                        if block is None or block.get("type") != "tool_use":
+                            raise RuntimeError("Anthropic sent tool arguments before tool_use")
+                        block["args"] += delta.get("partial_json", "")
                         await stream_obj.push(
                             ToolCallDeltaEvent(
-                                content_index=len(tool_calls),
+                                content_index=index,
                                 delta=delta.get("partial_json", ""),
                             )
                         )
-                elif event_type == "content_block_stop" and current_tool is not None:
-                    tool_calls.append(current_tool)
-                    current_tool = None
                 elif event_type == "message_delta":
                     delta = data.get("delta", {})
                     if delta.get("stop_reason") == "tool_use":
@@ -271,40 +313,53 @@ async def _stream_anthropic(
                     elif delta.get("stop_reason") == "max_tokens":
                         stop_reason = StopReason.LENGTH
                     response_usage = data.get("usage", {})
-                    if response_usage.get("output_tokens"):
-                        usage.output = response_usage["output_tokens"]
+                    usage.output = response_usage.get("output_tokens", usage.output)
                 elif event_type == "message_start":
                     response_usage = data.get("message", {}).get("usage", {})
-                    if response_usage.get("input_tokens"):
-                        usage.input = response_usage["input_tokens"]
-                elif event_type == "message_stop":
-                    usage.total_tokens = usage.input + usage.output
+                    usage.input = response_usage.get("input_tokens", 0)
+                    usage.cache_read = response_usage.get("cache_read_input_tokens", 0)
+                    usage.cache_write = response_usage.get("cache_creation_input_tokens", 0)
+                elif event_type == "error":
+                    error = data.get("error", {})
+                    raise RuntimeError(error.get("message") or "Anthropic stream error")
 
     try:
         await run_with_retries(
             request_once,
-            lambda: bool(thinking_parts or text_parts or tool_calls or current_tool),
+            lambda: bool(content_blocks),
             stream_obj,
             max_retries,
         )
 
         final_blocks: list[Any] = []
-        if thinking_parts:
-            final_blocks.append(ThinkingContent(thinking="".join(thinking_parts)))
-        if text_parts:
-            final_blocks.append(TextContent(text="".join(text_parts)))
-        for i, tc in enumerate(tool_calls):
-            try:
-                args = json.loads(tc["args"]) if tc["args"] else {}
-            except json.JSONDecodeError:
-                args = {}
-            call = ToolCall(id=tc["id"], name=tc["name"], arguments=args)
-            final_blocks.append(call)
-            await stream_obj.push(ToolCallEndEvent(content_index=i, tool_call=call))
+        for index in sorted(content_blocks):
+            block = content_blocks[index]
+            if block["type"] == "thinking":
+                final_blocks.append(
+                    ThinkingContent(
+                        thinking=block["thinking"],
+                        thinking_signature=block["signature"] or None,
+                    )
+                )
+            elif block["type"] == "redacted_thinking":
+                final_blocks.append(ThinkingContent(thinking=block["data"], redacted=True))
+            elif block["type"] == "text":
+                final_blocks.append(TextContent(text=block["text"]))
+            elif block["type"] == "tool_use":
+                try:
+                    args = json.loads(block["args"]) if block["args"] else {}
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"Anthropic returned invalid arguments for tool {block['name']}"
+                    ) from exc
+                call = ToolCall(id=block["id"], name=block["name"], arguments=args)
+                final_blocks.append(call)
+                await stream_obj.push(ToolCallEndEvent(content_index=index, tool_call=call))
 
         if not final_blocks:
             final_blocks = [TextContent(text="")]
 
+        usage.total_tokens = usage.input + usage.output + usage.cache_read + usage.cache_write
         final_msg = AssistantMessage(
             content=final_blocks,
             api=model.api,

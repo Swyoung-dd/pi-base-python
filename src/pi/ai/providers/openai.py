@@ -272,12 +272,23 @@ async def _stream_openai(
                 if data == "[DONE]":
                     break
                 chunk = json.loads(data)
+                if chunk.get("error"):
+                    error = chunk["error"]
+                    raise RuntimeError(error.get("message") or "OpenAI stream error")
                 choices = chunk.get("choices", [])
                 if chunk.get("usage"):
                     response_usage = chunk["usage"]
-                    usage.input = response_usage.get("prompt_tokens", 0)
+                    prompt_tokens = response_usage.get("prompt_tokens", 0)
+                    prompt_details = response_usage.get("prompt_tokens_details") or {}
+                    cached_tokens = prompt_details.get("cached_tokens", 0)
+                    completion_details = response_usage.get("completion_tokens_details") or {}
+                    usage.input = max(0, prompt_tokens - cached_tokens)
+                    usage.cache_read = cached_tokens
                     usage.output = response_usage.get("completion_tokens", 0)
-                    usage.total_tokens = response_usage.get("total_tokens", 0)
+                    usage.reasoning = completion_details.get("reasoning_tokens")
+                    usage.total_tokens = (
+                        usage.input + usage.output + usage.cache_read + usage.cache_write
+                    )
                 if not choices:
                     continue
                 delta = choices[0].get("delta", {})
@@ -335,8 +346,10 @@ async def _stream_openai(
             buf = tool_buffers[idx]
             try:
                 args = json.loads(buf["args"]) if buf["args"] else {}
-            except json.JSONDecodeError:
-                args = {}
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"OpenAI returned invalid arguments for tool {buf['name']}"
+                ) from exc
             tc = ToolCall(id=buf["id"], name=buf["name"], arguments=args)
             final_blocks.append(tc)
             await stream_obj.push(ToolCallEndEvent(content_index=idx, tool_call=tc))
