@@ -40,6 +40,19 @@ from pi.coding_agent.sessions import list_sessions, new_session_id, session_path
 from pi.coding_agent.skills import Skill
 
 
+def _format_tokens(tokens: int) -> str:
+    """将 token 数格式化为适合状态栏的紧凑文本。"""
+    if tokens < 1_000:
+        return str(tokens)
+    if tokens < 10_000:
+        return f"{tokens / 1_000:.1f}k"
+    if tokens < 1_000_000:
+        return f"{round(tokens / 1_000)}k"
+    if tokens < 10_000_000:
+        return f"{tokens / 1_000_000:.1f}m"
+    return f"{round(tokens / 1_000_000)}m"
+
+
 class _SafeFileHistory(FileHistory):
     """过滤疑似 API Key，避免凭据落入磁盘输入历史。"""
 
@@ -167,8 +180,7 @@ class InteractiveSession:
                 for index, model in enumerate(models, start=1):
                     marker = (
                         "*"
-                        if current
-                        and (model.provider, model.id) == (current.provider, current.id)
+                        if current and (model.provider, model.id) == (current.provider, current.id)
                         else " "
                     )
                     self._console.print(
@@ -325,7 +337,15 @@ class InteractiveSession:
         model = self._agent.state.model
         model_name = f"{model.provider}/{model.id}" if model else "no model"
         session = self._session_id or "memory"
-        return f" {model_name} | session {session} "
+        context_usage = self._agent.get_context_usage()
+        context = ""
+        if context_usage is not None:
+            context = (
+                f" | ctx {_format_tokens(context_usage.tokens)}/"
+                f"{_format_tokens(context_usage.context_window)} "
+                f"({context_usage.percent:.1f}%)"
+            )
+        return f" {model_name}{context} | session {session} "
 
     async def run(self) -> None:
         """运行交互式 REPL 循环。"""

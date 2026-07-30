@@ -24,6 +24,16 @@ class CompactionResult:
     dropped_messages: int
 
 
+@dataclass(frozen=True)
+class ContextUsageEstimate:
+    """当前上下文 token 使用量的估算结果。"""
+
+    tokens: int
+    usage_tokens: int
+    trailing_tokens: int
+    last_usage_index: int | None
+
+
 def _message_text(message: AgentMessage) -> str:
     if isinstance(message, AgentUserMessage):
         if isinstance(message.content, str):
@@ -52,6 +62,37 @@ def estimate_message_tokens(message: AgentMessage) -> int:
 
 def estimate_messages_tokens(messages: list[AgentMessage]) -> int:
     return sum(estimate_message_tokens(message) for message in messages)
+
+
+def calculate_context_tokens(message: AgentAssistantMessage) -> int:
+    """从 provider 用量中提取该响应结束时的上下文 token 数。"""
+    usage = message.usage
+    return usage.total_tokens or (usage.input + usage.output + usage.cache_read + usage.cache_write)
+
+
+def estimate_context_tokens(messages: list[AgentMessage]) -> ContextUsageEstimate:
+    """以最近一次有效 provider 用量为基线，估算当前上下文大小。"""
+    last_usage_index: int | None = None
+    usage_tokens = 0
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if not isinstance(message, AgentAssistantMessage):
+            continue
+        if message.stop_reason in ("aborted", "error"):
+            continue
+        usage_tokens = calculate_context_tokens(message)
+        if usage_tokens > 0:
+            last_usage_index = index
+            break
+
+    trailing_start = last_usage_index + 1 if last_usage_index is not None else 0
+    trailing_tokens = estimate_messages_tokens(messages[trailing_start:])
+    return ContextUsageEstimate(
+        tokens=usage_tokens + trailing_tokens,
+        usage_tokens=usage_tokens,
+        trailing_tokens=trailing_tokens,
+        last_usage_index=last_usage_index,
+    )
 
 
 def _group_turns(messages: list[AgentMessage]) -> list[list[AgentMessage]]:

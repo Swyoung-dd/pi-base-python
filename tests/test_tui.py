@@ -1,8 +1,10 @@
 """交互终端状态与命令测试。"""
 
+from pi.agent.types import AgentAssistantMessage
 from pi.ai.models import list_models
 from pi.ai.oauth import CredentialStore, resolve_stored_api_key, save_api_key
-from pi.tui.interactive import InteractiveSession, _SafeFileHistory
+from pi.ai.types import TextContent, Usage
+from pi.tui.interactive import InteractiveSession, _format_tokens, _SafeFileHistory
 
 
 async def _unused_stream(model, context, options):
@@ -15,6 +17,7 @@ async def test_model_command_updates_toolbar(tmp_path, monkeypatch):
     replacement = models[1]
     store = CredentialStore(tmp_path / "auth.json")
     await save_api_key(replacement.provider, "existing-key", store)
+
     async def prompt_api_key(message):
         return "new-key"
 
@@ -40,6 +43,29 @@ async def test_model_command_updates_toolbar(tmp_path, monkeypatch):
     assert "test-session" in session._bottom_toolbar()
     assert selected_models == [replacement]
     assert await resolve_stored_api_key(replacement.provider, store) == "new-key"
+
+
+def test_toolbar_shows_context_usage_and_percentage(tmp_path):
+    model = list_models()[0]
+    session = InteractiveSession(
+        model=model,
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        history_file=tmp_path / "history",
+    )
+    session._agent.state.messages.append(
+        AgentAssistantMessage(
+            content=[TextContent(text="answer")],
+            usage=Usage(input=9_000, output=1_000, total_tokens=10_000),
+            stop_reason="stop",
+        )
+    )
+
+    toolbar = session._bottom_toolbar()
+
+    assert f"ctx 10k/{_format_tokens(model.context_window)}" in toolbar
+    assert f"({10_000 / model.context_window * 100:.1f}%)" in toolbar
 
 
 async def test_model_command_selects_model_and_prompts_for_api_key(tmp_path, monkeypatch):

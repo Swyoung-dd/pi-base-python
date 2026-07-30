@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pi.agent.agent_loop import run_agent_loop
+from pi.agent.compaction import estimate_context_tokens
 from pi.agent.session.base import SessionStorage
 from pi.agent.types import (
     AgentAssistantMessage,
@@ -64,6 +65,15 @@ class AgentOptions:
     compact_to_tokens: int | None = None
     thinking_level: ModelThinkingLevel = ModelThinkingLevel.OFF
     thinking_budget_tokens: int | None = None
+
+
+@dataclass(frozen=True)
+class ContextUsage:
+    """当前模型上下文窗口的使用情况。"""
+
+    tokens: int
+    context_window: int
+    percent: float
 
 
 class _PendingQueue:
@@ -139,6 +149,18 @@ class Agent:
     @property
     def context_token_limit(self) -> int | None:
         return self._context_token_limit
+
+    def get_context_usage(self) -> ContextUsage | None:
+        """返回当前会话上下文使用量；无窗口信息时返回 None。"""
+        model = self._state.model
+        if model is None or model.context_window <= 0:
+            return None
+        tokens = estimate_context_tokens(self._state.messages).tokens
+        return ContextUsage(
+            tokens=tokens,
+            context_window=model.context_window,
+            percent=tokens / model.context_window * 100,
+        )
 
     def subscribe(self, listener: AgentListener) -> Callable[[], None]:
         self._listeners.append(listener)
