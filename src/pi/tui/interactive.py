@@ -23,7 +23,6 @@ from prompt_toolkit.output import DummyOutput
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 from rich.console import Console, Group
-from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
@@ -163,7 +162,6 @@ class InteractiveSession:
         self._agent.subscribe(self._on_event)
         self._current_text = ""
         self._current_thinking = ""
-        self._live: Live | None = None
         self._agent_task: asyncio.Task[None] | None = None
         self._request_usage = Usage()
         self._sessions_dir = sessions_dir
@@ -236,56 +234,38 @@ class InteractiveSession:
             output=None if interactive_terminal else DummyOutput(),
         )
 
-    def _message_panel(self, preview: bool = False) -> Panel:
-        """根据当前流式内容创建消息面板。"""
+    def _message_panel(self) -> Panel:
+        """根据当前消息内容创建最终输出面板。"""
         content = []
-        height = max(4, min(12, self._console.height // 3)) if preview else None
-        if preview:
-            available_lines = (height or 4) - 2
-            max_chars = max(80, (self._console.width - 4) * available_lines)
-            if self._current_text:
-                content.append(Text(self._current_text[-max_chars:]))
-            elif self._current_thinking:
-                content.append(Text("Thinking", style=self._theme.muted))
-                content.append(
-                    Text(self._current_thinking[-max_chars:], style=self._theme.thinking)
-                )
-        else:
-            if self._current_thinking:
-                content.append(Text("Thinking", style=self._theme.muted))
-                content.append(Text(self._current_thinking, style=self._theme.thinking))
-            if self._current_text:
-                content.append(Markdown(self._current_text))
+        if self._current_thinking:
+            content.append(Text("Thinking", style=self._theme.muted))
+            content.append(Text(self._current_thinking, style=self._theme.thinking))
+        if self._current_text:
+            content.append(Markdown(self._current_text))
         return Panel(
             Group(*content),
             title="piY",
             border_style=self._theme.primary,
-            height=height,
         )
 
-    def _stop_live(self) -> None:
-        """清除临时流式区域，避免刷新帧进入终端回滚缓冲区。"""
-        if self._live is None:
-            return
-        self._live.stop()
-        self._live = None
+    def _refresh_stream_preview(self) -> None:
+        """通知输入应用刷新流式状态，避免多个渲染器争用终端光标。"""
+        if self._prompt_session.app.is_running:
+            self._prompt_session.app.invalidate()
 
-    def _update_live(self) -> None:
-        """仅在收到可见内容后启动实时渲染，避免工具消息产生空框。"""
-        if not self._current_text and not self._current_thinking:
-            return
-        panel = self._message_panel(preview=True)
-        if self._live is None:
-            self._live = Live(
-                panel,
-                console=self._console,
-                refresh_per_second=4,
-                transient=True,
-                vertical_overflow="crop",
-            )
-            self._live.start(refresh=True)
-            return
-        self._live.update(panel)
+    def _stream_preview(self) -> str:
+        """生成单行流式预览，完整内容在消息结束后统一渲染。"""
+        content = self._current_text or self._current_thinking
+        if not content:
+            return ""
+        preview = " ".join(content.split())
+        if not preview:
+            return ""
+        label = "Answer" if self._current_text else "Thinking"
+        available = max(20, self._console.width - len(label) - 5)
+        if len(preview) > available:
+            preview = f"...{preview[-(available - 3):]}"
+        return f"\n {label}: {preview}"
 
     def _record_usage(self, usage: Usage) -> None:
         """累计一次用户请求内所有模型轮次的 token 用量。"""
@@ -612,10 +592,10 @@ class InteractiveSession:
             self._current_thinking = ""
         elif event.type == "text_delta":
             self._current_text += event.delta
-            self._update_live()
+            self._refresh_stream_preview()
         elif event.type == "thinking_delta":
             self._current_thinking += event.delta
-            self._update_live()
+            self._refresh_stream_preview()
         elif event.type == "message_end":
             final_text = "\n".join(
                 block.text
@@ -629,15 +609,15 @@ class InteractiveSession:
             )
             self._current_text = final_text or self._current_text
             self._current_thinking = final_thinking or self._current_thinking
-            self._stop_live()
             if self._current_text or self._current_thinking:
                 self._console.print(self._message_panel())
             self._current_text = ""
             self._current_thinking = ""
+            self._refresh_stream_preview()
         elif event.type == "tool_execution_start":
-            self._stop_live()
             self._current_text = ""
             self._current_thinking = ""
+            self._refresh_stream_preview()
             label = _format_tool_display(event.tool_name, event.arguments)
             self._console.print(f"  -> {label}", style=self._theme.muted)
         elif event.type == "tool_execution_end":
@@ -679,7 +659,8 @@ class InteractiveSession:
         thinking = ""
         if model is not None and model.reasoning:
             thinking = f" | thinking {self._agent.thinking_level.value}"
-        return f" {model_name}{thinking}{context} | session {session} "
+        status = f" {model_name}{thinking}{context} | session {session} "
+        return f"{status}{self._stream_preview()}"
 
     async def _restore_session_model(self) -> None:
         """恢复当前分支最后记录的模型选择。"""
