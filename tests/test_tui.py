@@ -5,6 +5,7 @@ from pi.agent.types import AgentAssistantMessage, create_user_message
 from pi.ai.models import list_models
 from pi.ai.oauth import CredentialStore, resolve_stored_api_key, save_api_key
 from pi.ai.types import TextContent, Usage
+from pi.coding_agent.prompt_templates import PromptTemplate
 from pi.tui.interactive import InteractiveSession, _format_tokens, _SafeFileHistory
 
 
@@ -152,6 +153,30 @@ def test_busy_session_queues_prompt_as_steering(tmp_path, monkeypatch):
 
     assert len(queued) == 1
     assert queued[0].content == "correction"
+
+
+async def test_prompt_template_command_submits_expanded_prompt(tmp_path, monkeypatch):
+    template = PromptTemplate(
+        name="review",
+        description="Review files",
+        content="Review $ARGUMENTS",
+        file_path=tmp_path / "review.md",
+    )
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        prompt_templates=[template],
+        history_file=tmp_path / "history",
+    )
+    prompts = []
+    monkeypatch.setattr(session, "_submit_agent_prompt", prompts.append)
+
+    handled, should_exit = await session._handle_command("/review src/pi")
+
+    assert handled and not should_exit
+    assert prompts == ["Review src/pi"]
 
 
 async def test_model_command_selects_model_and_prompts_for_api_key(tmp_path, monkeypatch):

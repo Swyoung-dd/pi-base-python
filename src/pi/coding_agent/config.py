@@ -28,6 +28,8 @@ class Config:
     enable_entrypoint_extensions: bool = False
     skill_paths: list[Path] = field(default_factory=list)
     enable_skills: bool = True
+    prompt_paths: list[Path] = field(default_factory=list)
+    enable_prompt_templates: bool = True
     enable_context_files: bool = True
     is_configured: bool = False
     config_dir: Path = field(default_factory=lambda: Path.cwd() / ".piy")
@@ -75,6 +77,13 @@ def load_config(
             ]
         if project_trusted and "enable_skills" in data:
             config.enable_skills = bool(data["enable_skills"])
+        if project_trusted and "prompts" in data:
+            config.prompt_paths = [
+                (config_dir / path).resolve() if not Path(path).is_absolute() else Path(path)
+                for path in data["prompts"]
+            ]
+        if project_trusted and "enable_prompt_templates" in data:
+            config.enable_prompt_templates = bool(data["enable_prompt_templates"])
         if "enable_context_files" in data:
             config.enable_context_files = bool(data["enable_context_files"])
 

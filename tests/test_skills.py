@@ -37,3 +37,15 @@ def test_invalid_skill_name_is_rejected(tmp_path):
 
     with pytest.raises(ValueError, match="Invalid skill name"):
         load_skill(path)
+
+
+def test_skill_path_precedence_keeps_first_definition(tmp_path):
+    project = tmp_path / "project" / "review" / "SKILL.md"
+    user = tmp_path / "user" / "review" / "SKILL.md"
+    _write_skill(project, "review", "Project review")
+    _write_skill(user, "review", "User review")
+
+    skills = load_skills([project.parent.parent, user.parent.parent])
+
+    assert len(skills) == 1
+    assert skills[0].description == "Project review"

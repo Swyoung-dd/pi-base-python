@@ -21,6 +21,8 @@ extensions:
   - extension.py
 skills:
   - skills
+prompts:
+  - prompts
 """,
         encoding="utf-8",
     )
@@ -32,6 +34,7 @@ skills:
     assert config.system_prompt == ""
     assert config.extension_paths == []
     assert config.skill_paths == []
+    assert config.prompt_paths == []
 
 
 def test_trust_store_inherits_nearest_parent_decision(tmp_path):

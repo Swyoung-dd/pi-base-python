@@ -39,6 +39,7 @@ from pi.ai.types import Model, ModelThinkingLevel
 from pi.coding_agent.extensions import ExtensionCommand
 from pi.coding_agent.file_references import expand_file_references
 from pi.coding_agent.model_auth import contains_likely_api_key, ensure_model_auth
+from pi.coding_agent.prompt_templates import PromptTemplate
 from pi.coding_agent.sessions import (
     format_session_tree,
     list_sessions,
@@ -95,6 +96,7 @@ class InteractiveSession:
         max_tokens: int | None = None,
         commands: dict[str, ExtensionCommand] | None = None,
         skills: list[Skill] | None = None,
+        prompt_templates: list[PromptTemplate] | None = None,
         cwd: Path | None = None,
         history_file: Path | None = None,
         credential_store: CredentialStore | None = None,
@@ -126,6 +128,26 @@ class InteractiveSession:
         self._session_storage = session_storage
         self._commands = commands or {}
         self._skills = {skill.name: skill for skill in skills or []}
+        self._prompt_templates = {template.name: template for template in prompt_templates or []}
+        reserved_commands = {
+            "branch",
+            "clear",
+            "exit",
+            "follow-up",
+            "help",
+            "model",
+            "new",
+            "resume",
+            "sessions",
+            "skill",
+            "steer",
+            "templates",
+            "tree",
+        }
+        conflicts = set(self._prompt_templates) & (reserved_commands | set(self._commands))
+        if conflicts:
+            names = ", ".join(sorted(conflicts))
+            raise ValueError(f"Prompt template command conflicts: {names}")
         self._credential_store = credential_store or get_default_credential_store()
         self._on_model_selected = on_model_selected
         command_names = [
@@ -137,12 +159,14 @@ class InteractiveSession:
             "/new",
             "/resume",
             "/sessions",
+            "/templates",
             "/tree",
             "/skill",
             "/steer",
             "/follow-up",
             *[f"/{name}" for name in self._commands],
             *[f"/skill:{name}" for name in self._skills],
+            *[f"/{name}" for name in self._prompt_templates],
         ]
         history = _SafeFileHistory(str(history_file)) if history_file else _SafeInMemoryHistory()
         interactive_terminal = sys.stdin.isatty() and sys.stdout.isatty()
@@ -179,10 +203,19 @@ class InteractiveSession:
             self._console.print(
                 "/new  /resume <id>  /sessions  /model [provider/id]  "
                 "/tree  /branch <entry-id>  "
+                "/templates  /<template> [arguments]  "
                 "/skill <name> [task]  /steer <message>  /follow-up <message>  "
                 "/clear  /help  /exit",
                 style="dim",
             )
+            return True, False
+        if command == "/templates":
+            if not self._prompt_templates:
+                self._console.print("No prompt templates.", style="dim")
+                return True, False
+            for template in self._prompt_templates.values():
+                description = f" - {template.description}" if template.description else ""
+                self._console.print(f"/{template.name}{description}", style="dim")
             return True, False
         if command == "/model":
             models = list_models()
@@ -342,6 +375,12 @@ class InteractiveSession:
                 result = await result
             if result:
                 self._console.print(result)
+            return True, False
+        prompt_template = self._prompt_templates.get(command.lstrip("/"))
+        if prompt_template is not None:
+            self._submit_agent_prompt(
+                expand_file_references(prompt_template.render(argument), self._cwd)
+            )
             return True, False
         if prompt.startswith("/"):
             self._console.print(f"Unknown command: {command}", style="yellow")

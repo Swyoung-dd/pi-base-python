@@ -31,6 +31,7 @@ from pi.coding_agent.project_trust import (
     has_protected_project_resources,
     resolve_project_trust,
 )
+from pi.coding_agent.prompt_templates import load_prompt_templates
 from pi.coding_agent.sessions import list_sessions, resolve_session_id, session_path
 from pi.coding_agent.setup import run_setup
 from pi.coding_agent.skills import format_skills_for_prompt, load_skills
@@ -70,11 +71,19 @@ async def _build_runtime(config, cwd: Path):
     skills = []
     if config.enable_skills:
         skill_paths = [
-            Path.home() / ".piy" / "skills",
-            config.config_dir / "skills",
             *config.skill_paths,
+            config.config_dir / "skills",
+            Path.home() / ".piy" / "skills",
         ]
         skills = load_skills([path for path in skill_paths if path.exists()])
+    prompt_templates = []
+    if config.enable_prompt_templates:
+        prompt_paths = [
+            *config.prompt_paths,
+            config.config_dir / "prompts",
+            Path.home() / ".piy" / "prompts",
+        ]
+        prompt_templates = load_prompt_templates([path for path in prompt_paths if path.exists()])
     system_prompt = build_system_prompt(cwd, tool_names)
     context_files = (
         format_context_files(load_context_files(cwd)) if config.enable_context_files else ""
@@ -91,6 +100,7 @@ async def _build_runtime(config, cwd: Path):
         "\n\n".join(section for section in sections if section),
         extensions.commands,
         skills,
+        prompt_templates,
     )
 
 
@@ -123,7 +133,7 @@ async def run_print_mode(prompt: str, config, output_format: str = "text") -> No
     model = _resolve_model(config)
 
     cwd = Path.cwd()
-    tools, system_prompt, _, _ = await _build_runtime(config, cwd)
+    tools, system_prompt, _, _, _ = await _build_runtime(config, cwd)
 
     stream_fn = _make_stream_fn()
 
@@ -155,7 +165,7 @@ async def run_interactive_mode(
     model = _resolve_model(config)
 
     cwd = Path.cwd()
-    tools, system_prompt, commands, skills = await _build_runtime(config, cwd)
+    tools, system_prompt, commands, skills, prompt_templates = await _build_runtime(config, cwd)
 
     stream_fn = _make_stream_fn()
     session_id = await resolve_session_id(
@@ -185,6 +195,7 @@ async def run_interactive_mode(
         max_tokens=config.max_tokens,
         commands=commands,
         skills=skills,
+        prompt_templates=prompt_templates,
         cwd=cwd,
         history_file=config.config_dir / "history",
         on_model_selected=persist_model,

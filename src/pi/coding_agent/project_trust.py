@@ -16,6 +16,8 @@ _PROTECTED_CONFIG_KEYS = {
     "enable_entrypoint_extensions",
     "skills",
     "enable_skills",
+    "prompts",
+    "enable_prompt_templates",
 }
 
 
@@ -29,6 +31,9 @@ def has_protected_project_resources(config_dir: Path) -> bool:
         return True
     skills_dir = config_dir / "skills"
     if skills_dir.is_dir() and any(skills_dir.iterdir()):
+        return True
+    prompts_dir = config_dir / "prompts"
+    if prompts_dir.is_dir() and any(prompts_dir.iterdir()):
         return True
     config_file = config_dir / "config.yaml"
     if not config_file.is_file():
