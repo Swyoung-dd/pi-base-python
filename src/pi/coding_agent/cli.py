@@ -22,6 +22,7 @@ from pi.ai.oauth_xai import register_xai_oauth
 from pi.ai.providers.registry import get_provider
 from pi.ai.types import ModelThinkingLevel
 from pi.coding_agent.config import load_config
+from pi.coding_agent.extensions import load_extensions
 from pi.coding_agent.sessions import list_sessions, resolve_session_id, session_path
 from pi.coding_agent.system_prompt import build_system_prompt
 from pi.coding_agent.tools import (
@@ -45,6 +46,20 @@ def _build_tools(cwd: Path) -> list[AgentTool]:
         create_find_tool(),
         create_grep_tool(),
     ]
+
+
+async def _build_runtime(config, cwd: Path):
+    extensions = await load_extensions(
+        config.extension_paths,
+        config.enable_entrypoint_extensions,
+    )
+    tools = [*_build_tools(cwd), *extensions.tools]
+    tool_names = [tool.name for tool in tools]
+    if len(tool_names) != len(set(tool_names)):
+        raise click.ClickException("Extension tool name conflicts with a built-in tool")
+    system_prompt = build_system_prompt(cwd, tool_names)
+    sections = [config.system_prompt, *extensions.system_prompt_sections, system_prompt]
+    return tools, "\n\n".join(section for section in sections if section), extensions.commands
 
 
 def _make_stream_fn(model):
@@ -92,11 +107,7 @@ async def run_print_mode(prompt: str, config) -> None:
     model = _resolve_model(config)
 
     cwd = Path.cwd()
-    tools = _build_tools(cwd)
-    tool_names = [t.name for t in tools]
-    system_prompt = build_system_prompt(cwd, tool_names)
-    if config.system_prompt:
-        system_prompt = config.system_prompt + chr(10) + chr(10) + system_prompt
+    tools, system_prompt, _ = await _build_runtime(config, cwd)
 
     stream_fn = _make_stream_fn(model)
 
@@ -125,11 +136,7 @@ async def run_interactive_mode(
     model = _resolve_model(config)
 
     cwd = Path.cwd()
-    tools = _build_tools(cwd)
-    tool_names = [t.name for t in tools]
-    system_prompt = build_system_prompt(cwd, tool_names)
-    if config.system_prompt:
-        system_prompt = config.system_prompt + chr(10) + chr(10) + system_prompt
+    tools, system_prompt, commands = await _build_runtime(config, cwd)
 
     stream_fn = _make_stream_fn(model)
     session_id = await resolve_session_id(
@@ -148,6 +155,7 @@ async def run_interactive_mode(
         session_storage=session_storage,
         sessions_dir=config.sessions_dir,
         thinking_level=ModelThinkingLevel(config.thinking_level),
+        commands=commands,
     )
     await session.run()
 

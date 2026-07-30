@@ -24,6 +24,8 @@ class Config:
     max_tokens: int | None = None
     temperature: float | None = None
     thinking_level: str = "off"
+    extension_paths: list[Path] = field(default_factory=list)
+    enable_entrypoint_extensions: bool = False
     config_dir: Path = field(default_factory=lambda: Path.cwd() / ".pi")
     sessions_dir: Path = field(default_factory=lambda: Path.cwd() / ".pi" / "sessions")
 
@@ -51,6 +53,13 @@ def load_config(config_dir: Path | None = None) -> Config:
             config.temperature = data["temperature"]
         if "thinking_level" in data:
             config.thinking_level = data["thinking_level"]
+        if "extensions" in data:
+            config.extension_paths = [
+                (config_dir / path).resolve() if not Path(path).is_absolute() else Path(path)
+                for path in data["extensions"]
+            ]
+        if "enable_entrypoint_extensions" in data:
+            config.enable_entrypoint_extensions = bool(data["enable_entrypoint_extensions"])
 
     models_file = config_dir / "models.yaml"
     if models_file.exists():

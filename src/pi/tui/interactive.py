@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from pi.agent.session.base import SessionStorage
 from pi.agent.session.jsonl import JsonlStorage
 from pi.agent.types import AgentEvent, AgentTool
 from pi.ai.types import Model, ModelThinkingLevel
+from pi.coding_agent.extensions import ExtensionCommand
 from pi.coding_agent.sessions import list_sessions, new_session_id, session_path
 
 
@@ -36,6 +38,7 @@ class InteractiveSession:
         session_storage: SessionStorage | None = None,
         sessions_dir: Path | None = None,
         thinking_level: ModelThinkingLevel = ModelThinkingLevel.OFF,
+        commands: dict[str, ExtensionCommand] | None = None,
     ) -> None:
         self._console = Console()
         self._agent = Agent(
@@ -54,6 +57,7 @@ class InteractiveSession:
         self._current_thinking = ""
         self._live: Live | None = None
         self._sessions_dir = sessions_dir
+        self._commands = commands or {}
 
     def _update_live(self) -> None:
         if self._live is None:
@@ -112,6 +116,14 @@ class InteractiveSession:
                 return True, False
             await self._agent.switch_session(JsonlStorage(path), session_id)
             self._console.print(f"Session: {session_id}", style="dim")
+            return True, False
+        extension_command = self._commands.get(command.lstrip("/"))
+        if extension_command is not None:
+            result = extension_command(argument, self._agent)
+            if inspect.isawaitable(result):
+                result = await result
+            if result:
+                self._console.print(result)
             return True, False
         if prompt.startswith("/"):
             self._console.print(f"Unknown command: {command}", style="yellow")
