@@ -6,6 +6,7 @@ import asyncio
 import os
 import signal
 import subprocess
+from contextlib import suppress
 
 from pi.agent.tools.base import ToolContext, truncate_output
 from pi.agent.types import AgentTool, AgentToolCall, AgentToolResult
@@ -54,18 +55,23 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
             if os.name == "nt"
             else {"start_new_session": True}
         )
-        proc = await asyncio.create_subprocess_shell(
+        proc = subprocess.Popen(
             command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             cwd=cwd,
             **process_options,
         )
 
+        communicate_task = asyncio.create_task(asyncio.to_thread(proc.communicate))
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            stdout, stderr = await asyncio.wait_for(
+                asyncio.shield(communicate_task),
+                timeout=timeout,
+            )
         except TimeoutError:
-            await _terminate_process_tree(proc)
+            await _terminate_process_tree(proc, communicate_task)
             return AgentToolResult(
                 tool_call_id=call.id,
                 tool_name="bash",
@@ -73,7 +79,7 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
                 is_error=True,
             )
         except asyncio.CancelledError:
-            await _terminate_process_tree(proc)
+            await asyncio.shield(_terminate_process_tree(proc, communicate_task))
             raise
 
         output_parts = []
@@ -90,7 +96,6 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
             content=[TextContent(text=truncate_output("\n".join(output_parts)))],
             is_error=is_error,
         )
-
     except Exception as exc:
         return AgentToolResult(
             tool_call_id=call.id,
@@ -100,31 +105,31 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
         )
 
 
-async def _terminate_process_tree(proc: asyncio.subprocess.Process) -> None:
+async def _terminate_process_tree(
+    proc: subprocess.Popen,
+    communicate_task: asyncio.Task[tuple[bytes, bytes]],
+) -> None:
     """终止 shell 及其派生进程，避免超时或取消后遗留后台任务。"""
     if proc.returncode is not None:
         return
     if os.name == "nt":
-        killer = await asyncio.create_subprocess_exec(
-            "taskkill",
-            "/PID",
-            str(proc.pid),
-            "/T",
-            "/F",
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+        await asyncio.to_thread(
+            subprocess.run,
+            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
         )
-        await killer.wait()
+        with suppress(ProcessLookupError):
+            proc.kill()
     else:
-        try:
+        with suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
     try:
-        await asyncio.wait_for(proc.wait(), timeout=5)
+        await asyncio.wait_for(asyncio.shield(communicate_task), timeout=2)
     except TimeoutError:
-        proc.kill()
-        await proc.wait()
+        communicate_task.cancel()
+        await asyncio.gather(communicate_task, return_exceptions=True)
 
 
 def create_bash_tool() -> AgentTool:
