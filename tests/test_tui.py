@@ -1,10 +1,13 @@
 """交互终端状态与命令测试。"""
 
+import pytest
+
 from pi.agent.session import JsonlStorage
 from pi.agent.types import AgentAssistantMessage, create_user_message
 from pi.ai.models import list_models
 from pi.ai.oauth import CredentialStore, resolve_stored_api_key, save_api_key
 from pi.ai.types import TextContent, Usage
+from pi.coding_agent.extensions import ExtensionContext
 from pi.coding_agent.prompt_templates import PromptTemplate
 from pi.tui.interactive import InteractiveSession, _format_tokens, _SafeFileHistory
 
@@ -177,6 +180,22 @@ async def test_prompt_template_command_submits_expanded_prompt(tmp_path, monkeyp
 
     assert handled and not should_exit
     assert prompts == ["Review src/pi"]
+
+
+def test_extension_commands_cannot_shadow_builtin_commands(tmp_path):
+    context = ExtensionContext()
+    context.add_command("model", lambda argument, agent: None)
+
+    with pytest.raises(ValueError, match="Extension command conflicts: model"):
+        InteractiveSession(
+            model=list_models()[0],
+            system_prompt="",
+            tools=[],
+            stream_fn=_unused_stream,
+            commands=context.commands,
+            extension_context=context,
+            history_file=tmp_path / "history",
+        )
 
 
 async def test_model_command_selects_model_and_prompts_for_api_key(tmp_path, monkeypatch):

@@ -98,7 +98,7 @@ async def _build_runtime(config, cwd: Path):
     return (
         tools,
         "\n\n".join(section for section in sections if section),
-        extensions.commands,
+        extensions,
         skills,
         prompt_templates,
     )
@@ -133,7 +133,7 @@ async def run_print_mode(prompt: str, config, output_format: str = "text") -> No
     model = _resolve_model(config)
 
     cwd = Path.cwd()
-    tools, system_prompt, _, _, _ = await _build_runtime(config, cwd)
+    tools, system_prompt, extensions, _, _ = await _build_runtime(config, cwd)
 
     stream_fn = _make_stream_fn()
 
@@ -151,7 +151,22 @@ async def run_print_mode(prompt: str, config, output_format: str = "text") -> No
     )
     agent.subscribe(PrintRenderer(output_format))
 
-    await agent.prompt(expand_file_references(prompt, cwd))
+    async def emit_extension_event(event_type, data=None) -> None:
+        for failure in await extensions.emit(event_type, data, agent):
+            click.echo(
+                f"Extension {failure.source} failed during {failure.event_type}: {failure.error}",
+                err=True,
+            )
+
+    async def forward_extension_event(event) -> None:
+        await emit_extension_event("agent_event", event)
+
+    agent.subscribe(forward_extension_event)
+    try:
+        await emit_extension_event("session_start", {"session_id": None})
+        await agent.prompt(expand_file_references(prompt, cwd))
+    finally:
+        await emit_extension_event("session_shutdown", {"session_id": None})
 
 
 async def run_interactive_mode(
@@ -165,7 +180,7 @@ async def run_interactive_mode(
     model = _resolve_model(config)
 
     cwd = Path.cwd()
-    tools, system_prompt, commands, skills, prompt_templates = await _build_runtime(config, cwd)
+    tools, system_prompt, extensions, skills, prompt_templates = await _build_runtime(config, cwd)
 
     stream_fn = _make_stream_fn()
     session_id = await resolve_session_id(
@@ -193,7 +208,8 @@ async def run_interactive_mode(
         thinking_level=ModelThinkingLevel(config.thinking_level),
         temperature=config.temperature,
         max_tokens=config.max_tokens,
-        commands=commands,
+        commands=extensions.commands,
+        extension_context=extensions,
         skills=skills,
         prompt_templates=prompt_templates,
         cwd=cwd,

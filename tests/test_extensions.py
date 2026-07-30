@@ -2,7 +2,7 @@
 
 import pytest
 
-from pi.coding_agent.extensions import load_extensions
+from pi.coding_agent.extensions import ExtensionContext, load_extensions
 
 
 async def test_local_extension_registers_prompt_and_command(tmp_path):
@@ -54,3 +54,43 @@ async def test_entrypoint_extensions_use_piy_group(monkeypatch):
     await load_extensions([], enable_entrypoints=True)
 
     assert captured["group"] == "piy.extensions"
+
+
+async def test_extension_lifecycle_handlers_run_in_order_and_isolate_failures(tmp_path):
+    extension = tmp_path / "lifecycle.py"
+    extension.write_text(
+        """async def first(event, agent):
+    agent.append((event.type, event.data))
+
+def failing(event, agent):
+    raise RuntimeError("broken hook")
+
+def last(event, agent):
+    agent.append(("last", event.data))
+
+def setup(context):
+    context.on("session_start", first)
+    context.on("session_start", failing)
+    context.on("session_start", last)
+""",
+        encoding="utf-8",
+    )
+    context = await load_extensions([extension])
+    events = []
+
+    failures = await context.emit("session_start", {"id": "one"}, events)
+
+    assert events == [
+        ("session_start", {"id": "one"}),
+        ("last", {"id": "one"}),
+    ]
+    assert len(failures) == 1
+    assert failures[0].source == str(extension)
+    assert str(failures[0].error) == "broken hook"
+
+
+def test_extension_rejects_unknown_lifecycle_event():
+    context = ExtensionContext()
+
+    with pytest.raises(ValueError, match="Unknown extension event"):
+        context.on("unknown", lambda event, agent: None)

@@ -19,6 +19,31 @@ from pi.ai.providers.registry import register_provider
 from pi.ai.types import Model
 
 ExtensionCommand = Callable[[str, Any], str | None | Awaitable[str | None]]
+ExtensionEventHandler = Callable[["ExtensionEvent", Any], None | Awaitable[None]]
+
+_EXTENSION_EVENT_TYPES = {
+    "agent_event",
+    "session_shutdown",
+    "session_start",
+    "session_switch",
+}
+
+
+@dataclass(frozen=True)
+class ExtensionEvent:
+    """发送给扩展生命周期处理器的事件。"""
+
+    type: str
+    data: Any = None
+
+
+@dataclass(frozen=True)
+class ExtensionFailure:
+    """被隔离的扩展处理器错误。"""
+
+    source: str
+    event_type: str
+    error: Exception
 
 
 @dataclass
@@ -28,6 +53,8 @@ class ExtensionContext:
     tools: list[AgentTool] = field(default_factory=list)
     system_prompt_sections: list[str] = field(default_factory=list)
     commands: dict[str, ExtensionCommand] = field(default_factory=dict)
+    event_handlers: dict[str, list[tuple[str, ExtensionEventHandler]]] = field(default_factory=dict)
+    _loading_source: str = field(default="extension", init=False, repr=False)
 
     def add_tool(self, tool: AgentTool) -> None:
         if any(existing.name == tool.name for existing in self.tools):
@@ -52,13 +79,50 @@ class ExtensionContext:
             raise ValueError(f"Duplicate extension command: {normalized}")
         self.commands[normalized] = command
 
+    def on(self, event_type: str, handler: ExtensionEventHandler) -> None:
+        """注册生命周期事件处理器。"""
+        if event_type not in _EXTENSION_EVENT_TYPES:
+            raise ValueError(f"Unknown extension event: {event_type}")
+        if not callable(handler):
+            raise TypeError(f"Extension event handler is not callable: {event_type}")
+        self.event_handlers.setdefault(event_type, []).append((self._loading_source, handler))
+
+    async def emit(
+        self,
+        event_type: str,
+        data: Any = None,
+        agent: Any = None,
+    ) -> list[ExtensionFailure]:
+        """按注册顺序触发生命周期事件，并隔离单个处理器错误。"""
+        event = ExtensionEvent(type=event_type, data=data)
+        failures = []
+        for source, handler in self.event_handlers.get(event_type, []):
+            try:
+                result = handler(event, agent)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as exc:
+                failures.append(
+                    ExtensionFailure(
+                        source=source,
+                        event_type=event_type,
+                        error=exc,
+                    )
+                )
+        return failures
+
 
 async def _run_setup(setup: Any, context: ExtensionContext, source: str) -> None:
     if not callable(setup):
         raise TypeError(f"Extension has no callable setup(context): {source}")
-    result = setup(context)
-    if inspect.isawaitable(result):
-        await result
+    previous_source = context._loading_source
+    context._loading_source = source
+    try:
+        result = setup(context)
+        if inspect.isawaitable(result):
+            await result
+    finally:
+        context._loading_source = previous_source
 
 
 async def _load_file(path: Path, context: ExtensionContext) -> None:

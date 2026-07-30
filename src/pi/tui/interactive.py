@@ -36,7 +36,7 @@ from pi.agent.types import AgentEvent, AgentTool, create_user_message
 from pi.ai.models import list_models
 from pi.ai.oauth import CredentialStore, get_default_credential_store
 from pi.ai.types import Model, ModelThinkingLevel
-from pi.coding_agent.extensions import ExtensionCommand
+from pi.coding_agent.extensions import ExtensionCommand, ExtensionContext
 from pi.coding_agent.file_references import expand_file_references
 from pi.coding_agent.model_auth import contains_likely_api_key, ensure_model_auth
 from pi.coding_agent.prompt_templates import PromptTemplate
@@ -95,6 +95,7 @@ class InteractiveSession:
         temperature: float | None = None,
         max_tokens: int | None = None,
         commands: dict[str, ExtensionCommand] | None = None,
+        extension_context: ExtensionContext | None = None,
         skills: list[Skill] | None = None,
         prompt_templates: list[PromptTemplate] | None = None,
         cwd: Path | None = None,
@@ -127,6 +128,7 @@ class InteractiveSession:
         self._session_id = session_id
         self._session_storage = session_storage
         self._commands = commands or {}
+        self._extension_context = extension_context or ExtensionContext()
         self._skills = {skill.name: skill for skill in skills or []}
         self._prompt_templates = {template.name: template for template in prompt_templates or []}
         reserved_commands = {
@@ -148,6 +150,10 @@ class InteractiveSession:
         if conflicts:
             names = ", ".join(sorted(conflicts))
             raise ValueError(f"Prompt template command conflicts: {names}")
+        extension_conflicts = set(self._commands) & reserved_commands
+        if extension_conflicts:
+            names = ", ".join(sorted(extension_conflicts))
+            raise ValueError(f"Extension command conflicts: {names}")
         self._credential_store = credential_store or get_default_credential_store()
         self._on_model_selected = on_model_selected
         command_names = [
@@ -293,6 +299,10 @@ class InteractiveSession:
                 return True, False
             await self._agent.switch_session(self._session_storage, self._session_id)
             await self._restore_session_model()
+            await self._emit_extension_event(
+                "session_switch",
+                {"reason": "branch", "session_id": self._session_id},
+            )
             self._console.print(f"Branched from: {entry_id}", style="dim")
             return True, False
         if command == "/skill" or command.startswith("/skill:"):
@@ -366,6 +376,10 @@ class InteractiveSession:
             self._session_storage = storage
             self._session_id = session_id
             await self._restore_session_model()
+            await self._emit_extension_event(
+                "session_switch",
+                {"reason": command.lstrip("/"), "session_id": session_id},
+            )
             self._console.print(f"Session: {session_id}", style="dim")
             return True, False
         extension_command = self._commands.get(command.lstrip("/"))
@@ -402,6 +416,7 @@ class InteractiveSession:
 
     async def _on_event(self, event: AgentEvent) -> None:
         """处理 agent 事件用于显示。"""
+        await self._emit_extension_event("agent_event", event)
         if event.type == "message_start":
             self._current_text = ""
             self._current_thinking = ""
@@ -492,12 +507,25 @@ class InteractiveSession:
         if model is not None:
             self._agent.set_model(model)
 
+    async def _emit_extension_event(self, event_type: str, data: Any = None) -> None:
+        """触发扩展事件并把隔离的错误输出到终端。"""
+        failures = await self._extension_context.emit(event_type, data, self._agent)
+        for failure in failures:
+            self._console.print(
+                f"Extension {failure.source} failed during {failure.event_type}: {failure.error}",
+                style="red",
+            )
+
     async def run(self) -> None:
         """运行交互式 REPL 循环。"""
         from pi import __version__
 
         await self._agent.restore()
         await self._restore_session_model()
+        await self._emit_extension_event(
+            "session_start",
+            {"session_id": self._session_id},
+        )
 
         self._console.print(
             Panel(Text(f"piY v{__version__} - coding agent", justify="center"), style="blue")
@@ -546,4 +574,8 @@ class InteractiveSession:
             if self._agent.is_busy:
                 self._agent.abort()
                 await self._agent.wait_for_idle()
+            await self._emit_extension_event(
+                "session_shutdown",
+                {"session_id": self._session_id},
+            )
             signal.signal(signal.SIGINT, previous_sigint)
