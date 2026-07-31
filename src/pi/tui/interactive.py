@@ -373,14 +373,14 @@ class InteractiveSession:
             self._prompt_session.app.invalidate()
 
     def _stream_preview(self) -> str:
-        """生成单行流式预览，完整内容在消息结束后统一渲染。"""
-        content = self._current_text or self._current_thinking
+        """生成回答的单行流式预览，思考内容始终保留在正文中。"""
+        content = self._current_text
         if not content:
             return ""
         preview = " ".join(content.split())
         if not preview:
             return ""
-        label = "Answer" if self._current_text else "Thinking"
+        label = "Answer"
         available = max(20, self._console.width - len(label) - 5)
         if len(preview) > available:
             preview = f"...{preview[-(available - 3) :]}"
@@ -718,7 +718,6 @@ class InteractiveSession:
             self._refresh_stream_preview()
         elif event.type == "thinking_delta":
             self._current_thinking += event.delta
-            self._refresh_stream_preview()
         elif event.type == "message_end":
             final_text = "\n".join(
                 block.text

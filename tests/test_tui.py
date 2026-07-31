@@ -19,7 +19,7 @@ from pi.agent.types import (
 )
 from pi.ai.models import list_models
 from pi.ai.oauth import CredentialStore, resolve_stored_api_key, save_api_key
-from pi.ai.types import ModelThinkingLevel, TextContent, ToolCall, Usage
+from pi.ai.types import ModelThinkingLevel, TextContent, ThinkingContent, ToolCall, Usage
 from pi.coding_agent.extensions import ExtensionContext
 from pi.coding_agent.prompt_templates import PromptTemplate
 from pi.coding_agent.themes import Theme
@@ -422,7 +422,7 @@ async def test_streaming_preview_uses_prompt_toolbar_and_prints_final_once(tmp_p
     assert isinstance(final_panel, Group)
 
 
-async def test_thinking_stream_is_visible_in_prompt_toolbar(tmp_path):
+async def test_thinking_is_rendered_in_body_before_tool_calls(tmp_path):
     session = InteractiveSession(
         model=list_models()[0],
         system_prompt="",
@@ -430,10 +430,25 @@ async def test_thinking_stream_is_visible_in_prompt_toolbar(tmp_path):
         stream_fn=_unused_stream,
         history_file=tmp_path / "history",
     )
+    session._console.print = Mock()
+    message = AgentAssistantMessage(
+        content=[
+            ThinkingContent(thinking="checking project files"),
+            ToolCall(id="call-1", name="read", arguments={"path": "README.md"}),
+        ]
+    )
 
     await session._on_event(ThinkingDeltaUpdateEvent(delta="checking project files"))
+    assert "checking project files" not in _toolbar_text(session)
 
-    assert "Thinking: checking project files" in _toolbar_text(session)
+    await session._on_event(MessageEndEvent(message=message))
+
+    renderable = session._console.print.call_args.args[0]
+    console = Console(record=True, width=80)
+    console.print(renderable)
+    output = console.export_text()
+    assert output.index("checking project files") < output.index("Read")
+    assert output.index("Read") < output.index("README.md")
 
 
 def test_welcome_panel_shows_model_actions_and_recent_sessions(tmp_path):
