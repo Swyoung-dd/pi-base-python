@@ -706,12 +706,7 @@ class InteractiveSession:
                 self._console.print(Text(self._current_thinking, style=self._theme.thinking))
                 self._thinking_printed = True
             self._current_text += event.delta
-            self._console.print(
-                event.delta,
-                end="",
-                markup=False,
-                highlight=False,
-            )
+            sys.stdout.write(event.delta)
             self._streamed_text = True
         elif event.type == "thinking_delta":
             self._current_thinking += event.delta
@@ -730,7 +725,8 @@ class InteractiveSession:
             self._current_thinking = final_thinking or self._current_thinking
             tool_calls = [block for block in event.message.content if isinstance(block, ToolCall)]
             if self._streamed_text:
-                self._console.print()
+                sys.stdout.write("\n")
+                sys.stdout.flush()
                 self._current_text = ""
             if self._thinking_printed:
                 self._current_thinking = ""
