@@ -190,6 +190,7 @@ class InteractiveSession:
         self._current_text = ""
         self._current_thinking = ""
         self._streamed_text = False
+        self._stream_buffer = ""
         self._thinking_printed = False
         self._agent_task: asyncio.Task[None] | None = None
         self._request_active = False
@@ -700,13 +701,22 @@ class InteractiveSession:
             self._current_text = ""
             self._current_thinking = ""
             self._streamed_text = False
+            self._stream_buffer = ""
             self._thinking_printed = False
         elif event.type == "text_delta":
             if self._current_thinking and not self._thinking_printed:
                 self._console.print(Text(self._current_thinking, style=self._theme.thinking))
                 self._thinking_printed = True
             self._current_text += event.delta
-            sys.stdout.write(event.delta)
+            self._stream_buffer += event.delta
+            if "\n" in self._stream_buffer:
+                complete, self._stream_buffer = self._stream_buffer.rsplit("\n", maxsplit=1)
+                self._console.print(
+                    f"{complete}\n",
+                    end="",
+                    markup=False,
+                    highlight=False,
+                )
             self._streamed_text = True
         elif event.type == "thinking_delta":
             self._current_thinking += event.delta
@@ -725,8 +735,13 @@ class InteractiveSession:
             self._current_thinking = final_thinking or self._current_thinking
             tool_calls = [block for block in event.message.content if isinstance(block, ToolCall)]
             if self._streamed_text:
-                sys.stdout.write("\n")
-                sys.stdout.flush()
+                if self._stream_buffer:
+                    self._console.print(
+                        self._stream_buffer,
+                        markup=False,
+                        highlight=False,
+                    )
+                self._stream_buffer = ""
                 self._current_text = ""
             if self._thinking_printed:
                 self._current_thinking = ""

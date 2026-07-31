@@ -401,7 +401,6 @@ async def test_non_streaming_text_message_is_rendered_once(tmp_path):
 
 async def test_streaming_answer_is_appended_to_body_without_toolbar_preview(
     tmp_path,
-    monkeypatch,
 ):
     session = InteractiveSession(
         model=list_models()[0],
@@ -411,23 +410,24 @@ async def test_streaming_answer_is_appended_to_body_without_toolbar_preview(
         history_file=tmp_path / "history",
     )
     session._console.print = Mock()
-    output = io.StringIO()
-    monkeypatch.setattr("pi.tui.interactive.sys.stdout", output)
     message = AgentAssistantMessage(content=[TextContent(text="final answer")])
 
     await session._on_event(MessageStartEvent(message=message))
     await session._on_event(TextDeltaUpdateEvent(delta="partial"))
 
     assert "partial" not in _toolbar_text(session)
-    assert output.getvalue() == "partial"
+    session._console.print.assert_not_called()
 
     await session._on_event(MessageEndEvent(message=message))
 
-    assert output.getvalue() == "partial\n"
-    session._console.print.assert_not_called()
+    session._console.print.assert_called_once_with(
+        "partial",
+        markup=False,
+        highlight=False,
+    )
 
 
-async def test_thinking_precedes_streaming_answer_in_body(tmp_path, monkeypatch):
+async def test_thinking_precedes_streaming_answer_in_body(tmp_path):
     session = InteractiveSession(
         model=list_models()[0],
         system_prompt="",
@@ -437,7 +437,6 @@ async def test_thinking_precedes_streaming_answer_in_body(tmp_path, monkeypatch)
     )
     output = io.StringIO()
     session._console = Console(file=output, width=80)
-    monkeypatch.setattr("pi.tui.interactive.sys.stdout", output)
     message = AgentAssistantMessage(
         content=[
             ThinkingContent(thinking="checking project files"),
@@ -455,7 +454,7 @@ async def test_thinking_precedes_streaming_answer_in_body(tmp_path, monkeypatch)
     assert rendered.count("final answer") == 1
 
 
-async def test_streaming_answer_preserves_markdown_chunks(tmp_path, monkeypatch):
+async def test_streaming_answer_preserves_markdown_chunks(tmp_path):
     session = InteractiveSession(
         model=list_models()[0],
         system_prompt="",
@@ -464,7 +463,7 @@ async def test_streaming_answer_preserves_markdown_chunks(tmp_path, monkeypatch)
         history_file=tmp_path / "history",
     )
     output = io.StringIO()
-    monkeypatch.setattr("pi.tui.interactive.sys.stdout", output)
+    session._console = Console(file=output, width=80)
     message = AgentAssistantMessage(
         content=[TextContent(text="| 文件 | 说明 |\n|---|---|\n| src | 主源码 |")]
     )
