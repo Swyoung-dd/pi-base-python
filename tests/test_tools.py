@@ -9,7 +9,7 @@ import pytest
 
 from pi.agent.tools.base import ToolContext
 from pi.agent.types import AgentToolCall
-from pi.coding_agent.tools.bash import create_bash_tool
+from pi.coding_agent.tools.bash import _decode_output, create_bash_tool
 from pi.coding_agent.tools.edit import create_edit_tool
 from pi.coding_agent.tools.ls import create_ls_tool
 from pi.coding_agent.tools.read import create_read_tool
@@ -96,6 +96,39 @@ async def test_bash():
     result = await bash_tool.execute(call, None)
     assert not result.is_error
     assert "hello" in result.content[0].text
+
+
+@pytest.mark.asyncio
+async def test_bash_explicit_shell():
+    bash_tool = create_bash_tool()
+    if sys.platform == "win32":
+        arguments = {"command": "echo hello", "shell": "powershell"}
+    else:
+        arguments = {"command": "echo hello", "shell": "sh"}
+    call = AgentToolCall(id="1", name="bash", arguments=arguments)
+    result = await bash_tool.execute(call, None)
+    assert not result.is_error
+    assert "hello" in result.content[0].text
+
+
+@pytest.mark.asyncio
+async def test_bash_invalid_shell():
+    bash_tool = create_bash_tool()
+    call = AgentToolCall(
+        id="1",
+        name="bash",
+        arguments={"command": "echo hello", "shell": "fish"},
+    )
+    result = await bash_tool.execute(call, None)
+    assert result.is_error
+    assert "Invalid shell" in result.content[0].text
+
+
+def test_bash_decode_output_falls_back_to_locale_encoding():
+    assert _decode_output(b"hello") == "hello"
+    # 非 UTF-8 字节不应抛异常，回退到区域编码。
+    result = _decode_output(b"\xff\xfe\x00invalid utf8")
+    assert isinstance(result, str)
 
 
 @pytest.mark.asyncio

@@ -1,14 +1,13 @@
-"""Core agent loop.
+"""核心 agent 循环。
 
-Implements the LLM <-> tool execution cycle:
-1. Send context to LLM via the stream function
-2. Receive assistant message (possibly with tool calls)
-3. Execute tool calls
-4. Feed tool results back as new context
-5. Repeat until the LLM stops with no tool calls
+实现 LLM 与工具执行之间的循环：
+1. 通过流函数把上下文发送给 LLM
+2. 接收助手消息（可能包含工具调用）
+3. 执行工具调用
+4. 把工具结果作为新上下文回填
+5. 重复执行，直到 LLM 停止且不再请求工具
 
-Translates between AgentMessage (agent-level) and Message (LLM-level) at the
-stream boundary.
+在流边界处完成 AgentMessage（agent 层）与 Message（LLM 层）之间的转换。
 """
 
 from __future__ import annotations
@@ -157,7 +156,7 @@ async def _execute_tool_call(
 
 
 def convert_to_llm(messages: list[AgentMessage]) -> list[Message]:
-    """Convert agent messages to LLM messages for the provider call."""
+    """将 agent 消息转换为 provider 调用所需的 LLM 消息。"""
     result: list[Message] = []
     for msg in messages:
         if isinstance(msg, AgentUserMessage):
@@ -205,19 +204,22 @@ async def run_agent_loop(
     tool_context: Any = None,
     get_steering_messages: Callable[[], list[AgentMessage]] | None = None,
     compact_fn: CompactFn | None = None,
+    max_turns: int | None = None,
 ) -> AgentLoopResult:
-    """Run the agent loop with a new prompt.
+    """使用新提示词运行一次 agent 循环。
 
     Args:
-        prompts: New user messages to start the turn.
-        context: Agent context (system prompt, messages, tools).
-        model: The Model to use.
-        stream_fn: Async function (model, context, options) -> EventStream.
-        sink: Event sink for lifecycle events.
-        options: Stream options (api_key, etc).
+        prompts: 开启本轮的用户消息。
+        context: Agent 上下文（system prompt、消息、工具）。
+        model: 要使用的 Model。
+        stream_fn: 异步函数 (model, context, options) -> EventStream。
+        sink: 生命周期事件的事件接收器。
+        options: 流选项（api_key 等）。
+        max_turns: 本次循环运行的最大模型调用次数。达到上限后
+            会在下一次模型调用之前优雅停止。
 
     Returns:
-        All new messages produced during this run.
+        本次运行产生的全部新消息。
     """
     all_messages = list(context.messages)
     all_messages.extend(prompts)
@@ -227,7 +229,11 @@ async def run_agent_loop(
     tools_map = {t.name: t for t in context.tools}
     ai_tools = [t.to_ai_tool() for t in context.tools] if context.tools else None
 
+    turn_count = 0
     while True:
+        if max_turns is not None and turn_count >= max_turns:
+            break
+        turn_count += 1
         context_messages = all_messages
         if options and options.context_token_limit:
             estimated_tokens = estimate_context_tokens_with_overhead(

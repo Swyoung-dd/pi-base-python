@@ -18,3 +18,5 @@ venv/
 *.db
 .piy/
 .idea
+.venv-run
+_tmptest

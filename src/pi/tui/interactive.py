@@ -169,6 +169,9 @@ def _format_tool_display(tool_name: str, arguments: dict) -> str:
     elif tool_name == "grep":
         suffix = f": /{pattern}/" if pattern else ""
         return f"grep{suffix}"
+    elif tool_name == "subagent":
+        task = arguments.get("task", "")
+        return f"subagent: {task}" if task else "subagent"
     else:
         return tool_name
 
@@ -334,6 +337,7 @@ class InteractiveSession:
             "grep": "Grep",
             "ls": "List",
             "read": "Read",
+            "subagent": "Subagent",
             "write": "Write",
         }
         for tool_name, calls in groups.items():

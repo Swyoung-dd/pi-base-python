@@ -1,7 +1,7 @@
-"""Stateful Agent wrapper around the low-level agent loop.
+"""低层 agent 循环之上的有状态 Agent 包装器。
 
-Owns the current transcript, emits lifecycle events, executes tools,
-and exposes queueing APIs for steering and follow-up messages.
+负责持有当前对话记录、发出生命周期事件、执行工具，
+并提供 steer 与 follow-up 消息的排队 API。
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ _COMPACTION_SYSTEM_PROMPT = """你负责压缩编码 agent 的早期会话。
 
 @dataclass
 class AgentOptions:
-    """Options for constructing an Agent."""
+    """构造 Agent 的选项。"""
 
     model: Model | None = None
     system_prompt: str = ""
@@ -84,6 +84,7 @@ class AgentOptions:
     compact_to_tokens: int | None = None
     temperature: float | None = None
     max_tokens: int | None = None
+    max_turns: int | None = None
     thinking_level: ModelThinkingLevel = ModelThinkingLevel.OFF
     thinking_budget_tokens: int | None = None
 
@@ -122,9 +123,9 @@ class _PendingQueue:
 
 
 class Agent:
-    """Stateful wrapper around the agent loop.
+    """agent 循环之上的有状态包装器。
 
-    Usage:
+    用法：
         agent = Agent(AgentOptions(model=..., stream_fn=..., tools=...))
         agent.subscribe(my_listener)
         await agent.prompt("Hello")
@@ -152,6 +153,9 @@ class Agent:
         self._session_loaded = False
         self._tool_execution = options.tool_execution
         self._tool_context = options.tool_context
+        if self._tool_context is not None:
+            # 让工具在执行时能拿到当前 agent 引用（如 subagent 工具）。
+            self._tool_context.state.setdefault("agent", self)
         model_context_limit = None
         if options.model is not None and options.model.context_window:
             reserved_tokens = options.max_tokens or options.model.max_tokens or 4096
@@ -160,6 +164,7 @@ class Agent:
         self._compact_to_tokens = options.compact_to_tokens
         self._temperature = options.temperature
         self._max_tokens = options.max_tokens
+        self._max_turns = options.max_turns
         self._thinking_level = options.thinking_level
         self._thinking_budget_tokens = options.thinking_budget_tokens
         self._abort_event = asyncio.Event()
@@ -182,6 +187,21 @@ class Agent:
     def thinking_level(self) -> ModelThinkingLevel:
         """返回后续模型请求使用的思考级别。"""
         return self._thinking_level
+
+    @property
+    def stream_fn(self) -> StreamFn | None:
+        """返回当前流函数，供子 agent 复用。"""
+        return self._stream_fn
+
+    @property
+    def temperature(self) -> float | None:
+        """返回当前温度设置。"""
+        return self._temperature
+
+    @property
+    def max_tokens(self) -> int | None:
+        """返回当前 max_tokens 设置。"""
+        return self._max_tokens
 
     @property
     def session_storage(self) -> SessionStorage | None:
@@ -366,6 +386,7 @@ class Agent:
                     tool_context=self._tool_context,
                     get_steering_messages=self._steering_queue.drain,
                     compact_fn=self._compact_with_model,
+                    max_turns=self._max_turns,
                 )
                 current_context = result.context_messages
                 if self._session_storage is not None:

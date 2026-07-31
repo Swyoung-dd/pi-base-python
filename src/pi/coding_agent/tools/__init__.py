@@ -6,6 +6,7 @@ from pi.coding_agent.tools.find import create_find_tool
 from pi.coding_agent.tools.grep import create_grep_tool
 from pi.coding_agent.tools.ls import create_ls_tool
 from pi.coding_agent.tools.read import create_read_tool
+from pi.coding_agent.tools.subagent import create_subagent_tool
 from pi.coding_agent.tools.write import create_write_tool
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "create_ls_tool",
     "create_find_tool",
     "create_grep_tool",
+    "create_subagent_tool",
 ]

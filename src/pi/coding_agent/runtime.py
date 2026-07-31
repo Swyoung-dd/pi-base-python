@@ -20,6 +20,7 @@ from pi.coding_agent.tools import (
     create_grep_tool,
     create_ls_tool,
     create_read_tool,
+    create_subagent_tool,
     create_write_tool,
 )
 
@@ -34,6 +35,7 @@ def build_tools() -> list[AgentTool]:
         create_ls_tool(),
         create_find_tool(),
         create_grep_tool(),
+        create_subagent_tool(),
     ]
 
 

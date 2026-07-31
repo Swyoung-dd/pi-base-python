@@ -6,12 +6,15 @@
 
 from __future__ import annotations
 
+import platform
 from pathlib import Path
 
 
 def build_system_prompt(cwd: Path, tool_names: list[str]) -> str:
     """构建编码 agent 的系统提示词。"""
     tools_list = ", ".join(tool_names) if tool_names else "none"
+    system_name = platform.system() or "Unknown"
+    default_shell = "PowerShell" if system_name == "Windows" else "bash"
 
     return f"""You are piY, an AI coding agent running in the user's terminal.
 
@@ -19,6 +22,7 @@ You help the user with software engineering tasks: reading, writing, and editing
 running commands, and debugging issues.
 
 Working directory: {cwd}
+Platform: {system_name} ({platform.machine()}); the bash tool runs commands with {default_shell}.
 
 Available tools: {tools_list}
 
@@ -30,7 +34,9 @@ Guidelines:
 - Respond in the language used by the user unless they ask for another language.
 - Read files before making changes to understand context.
 - Use the edit tool for targeted modifications; use write for new files.
-- Run commands with bash when you need to test or inspect.
+- Run commands with the bash tool when you need to test or inspect. Write commands for the
+  platform shell ({default_shell} on {system_name}); use PowerShell syntax on Windows
+  (e.g. Get-ChildItem instead of ls) and POSIX syntax on macOS/Linux.
 - Be direct and concise. Lead with the outcome, not the process.
 - When you encounter errors, diagnose and fix them rather than giving up.
 - Do not remove functionality unless the user asks.

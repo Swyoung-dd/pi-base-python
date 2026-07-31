@@ -70,6 +70,24 @@ python -m pi --version
 
 在交互模式中执行 `/thinking` 可查看当前思考级别，执行 `/thinking high` 可切换并持久化级别。支持 reasoning 的模型会在状态栏显示 `thinking <level>`，模型返回的思考内容会显示在回答面板的 `Thinking` 区域。
 
+## 子代理
+
+`subagent` 工具让主 agent 派生独立子 agent 完成任务。子 agent 运行自己的 agent 循环，完成后把最终回答作为工具结果返回。主 agent 可以并行派生多个子代理，也支持嵌套（默认最多 2 层）。
+
+参数：
+
+- `task`：任务描述（必填）
+- `tools`：`analysis`（默认，只读工具 read/ls/find/grep）、`full`（全部工具，含子代理）、`none`
+- `max_turns`：子代理最大模型轮数，默认 8
+- `model`：可选，`provider/model` 或唯一模型 id
+- `include_context`：可选，附带主对话最近几轮
+
+可以直接要求模型使用，例如：`请用 subagent 分析 src/pi/agent 的目录结构并汇报。`
+
+## 项目文档
+
+项目架构、设计思想、开发约定和扩展方式见 [docs/README.md](docs/README.md)。
+
 ## 打包
 
 版本号位于 `src/pi/__init__.py`。更新版本号后执行：
@@ -104,3 +122,21 @@ uv run --locked python -m pytest -q
 uv run --locked python -m build
 uv run --locked python scripts/smoke_wheel.py
 ```
+
+未安装 uv 时，可直接使用仓库内的虚拟环境（两平台通用，等价于上面的检查）：
+
+```powershell
+# Windows
+.\.venv\Scripts\ruff.exe check src tests scripts
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+```bash
+# macOS / Linux
+.venv/bin/ruff check src tests scripts
+.venv/bin/python -m pytest -q
+```
+
+`bash` 工具会在 Windows 上自动使用 PowerShell、在 macOS/Linux 上使用 bash，也可通过
+`shell` 参数显式指定 `powershell` / `cmd` / `bash` / `sh`。CI 同时覆盖
+Ubuntu、Windows 与 macOS（Python 3.12 / 3.13）。
