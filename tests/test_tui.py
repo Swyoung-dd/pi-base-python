@@ -398,7 +398,7 @@ async def test_non_streaming_text_message_is_rendered_once(tmp_path):
     assert isinstance(session._console.print.call_args.args[0], Group)
 
 
-async def test_streaming_preview_uses_prompt_toolbar_and_prints_final_once(tmp_path):
+async def test_streaming_answer_is_appended_to_body_without_toolbar_preview(tmp_path):
     session = InteractiveSession(
         model=list_models()[0],
         system_prompt="",
@@ -412,14 +412,44 @@ async def test_streaming_preview_uses_prompt_toolbar_and_prints_final_once(tmp_p
     await session._on_event(MessageStartEvent(message=message))
     await session._on_event(TextDeltaUpdateEvent(delta="partial"))
 
-    assert "Answer: partial" in _toolbar_text(session)
+    assert "partial" not in _toolbar_text(session)
+    session._console.print.assert_called_once_with(
+        "partial",
+        end="",
+        markup=False,
+        highlight=False,
+    )
 
     await session._on_event(MessageEndEvent(message=message))
 
-    assert "partial" not in _toolbar_text(session)
-    session._console.print.assert_called_once()
-    final_panel = session._console.print.call_args.args[0]
-    assert isinstance(final_panel, Group)
+    assert session._console.print.call_count == 2
+    session._console.print.assert_called_with()
+
+
+async def test_thinking_precedes_streaming_answer_in_body(tmp_path):
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        history_file=tmp_path / "history",
+    )
+    session._console = Console(record=True, width=80)
+    message = AgentAssistantMessage(
+        content=[
+            ThinkingContent(thinking="checking project files"),
+            TextContent(text="final answer"),
+        ]
+    )
+
+    await session._on_event(MessageStartEvent(message=message))
+    await session._on_event(ThinkingDeltaUpdateEvent(delta="checking project files"))
+    await session._on_event(TextDeltaUpdateEvent(delta="final answer"))
+    await session._on_event(MessageEndEvent(message=message))
+
+    output = session._console.export_text()
+    assert output.index("checking project files") < output.index("final answer")
+    assert output.count("final answer") == 1
 
 
 async def test_thinking_is_rendered_in_body_before_tool_calls(tmp_path):

@@ -69,8 +69,6 @@ _PROMPT_STYLE = Style.from_dict(
         "status.context": "#a3e635",
         "status.meta": "#9ca3af",
         "status.separator": "#525252",
-        "stream.label": "bold #fbbf24",
-        "stream.text": "italic #a3a3a3",
     }
 )
 
@@ -191,6 +189,8 @@ class InteractiveSession:
         self._agent.subscribe(self._on_event)
         self._current_text = ""
         self._current_thinking = ""
+        self._streamed_text = False
+        self._thinking_printed = False
         self._agent_task: asyncio.Task[None] | None = None
         self._request_active = False
         self._request_usage = Usage()
@@ -367,24 +367,10 @@ class InteractiveSession:
             return [("class:input.working", " Working ")]
         return [("class:input.ready", " Ready ")]
 
-    def _refresh_stream_preview(self) -> None:
-        """通知输入应用刷新流式状态，避免多个渲染器争用终端光标。"""
+    def _refresh_prompt(self) -> None:
+        """通知输入应用刷新状态，避免直接操作终端光标。"""
         if self._prompt_session.app.is_running:
             self._prompt_session.app.invalidate()
-
-    def _stream_preview(self) -> str:
-        """生成回答的单行流式预览，思考内容始终保留在正文中。"""
-        content = self._current_text
-        if not content:
-            return ""
-        preview = " ".join(content.split())
-        if not preview:
-            return ""
-        label = "Answer"
-        available = max(20, self._console.width - len(label) - 5)
-        if len(preview) > available:
-            preview = f"...{preview[-(available - 3) :]}"
-        return f"{label}: {preview}"
 
     def _record_usage(self, usage: Usage) -> None:
         """累计一次用户请求内所有模型轮次的 token 用量。"""
@@ -412,7 +398,7 @@ class InteractiveSession:
             await self._agent.prompt(prompt)
         finally:
             self._request_active = False
-            self._refresh_stream_preview()
+            self._refresh_prompt()
             self._print_request_usage()
 
     async def _handle_command(self, prompt: str) -> tuple[bool, bool]:
@@ -705,7 +691,7 @@ class InteractiveSession:
         self._request_usage = Usage()
         self._request_active = True
         self._agent_task = asyncio.create_task(self._run_agent_prompt(prompt))
-        self._refresh_stream_preview()
+        self._refresh_prompt()
 
     async def _on_event(self, event: AgentEvent) -> None:
         """处理 agent 事件用于显示。"""
@@ -713,9 +699,20 @@ class InteractiveSession:
         if event.type == "message_start":
             self._current_text = ""
             self._current_thinking = ""
+            self._streamed_text = False
+            self._thinking_printed = False
         elif event.type == "text_delta":
+            if self._current_thinking and not self._thinking_printed:
+                self._console.print(Text(self._current_thinking, style=self._theme.thinking))
+                self._thinking_printed = True
             self._current_text += event.delta
-            self._refresh_stream_preview()
+            self._console.print(
+                event.delta,
+                end="",
+                markup=False,
+                highlight=False,
+            )
+            self._streamed_text = True
         elif event.type == "thinking_delta":
             self._current_thinking += event.delta
         elif event.type == "message_end":
@@ -732,16 +729,21 @@ class InteractiveSession:
             self._current_text = final_text or self._current_text
             self._current_thinking = final_thinking or self._current_thinking
             tool_calls = [block for block in event.message.content if isinstance(block, ToolCall)]
+            if self._streamed_text:
+                self._console.print()
+                self._current_text = ""
+            if self._thinking_printed:
+                self._current_thinking = ""
             renderable = self._message_renderable(tool_calls)
             if renderable is not None:
                 self._console.print(renderable)
             self._current_text = ""
             self._current_thinking = ""
-            self._refresh_stream_preview()
+            self._refresh_prompt()
         elif event.type == "tool_execution_start":
             self._current_text = ""
             self._current_thinking = ""
-            self._refresh_stream_preview()
+            self._refresh_prompt()
         elif event.type == "tool_execution_end":
             if event.result and event.result.is_error:
                 for block in event.result.content:
@@ -811,16 +813,6 @@ class InteractiveSession:
                 ]
             )
         fragments.append(("class:status.meta", " "))
-        preview = self._stream_preview()
-        if preview:
-            label, content = preview.split(": ", maxsplit=1)
-            fragments.extend(
-                [
-                    ("", "\n "),
-                    ("class:stream.label", f"{label}: "),
-                    ("class:stream.text", content),
-                ]
-            )
         return fragments
 
     async def _restore_session_model(self) -> None:
