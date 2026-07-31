@@ -5,6 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 from prompt_toolkit.formatted_text import fragment_list_to_text, to_formatted_text
+from prompt_toolkit.formatted_text.utils import fragment_list_width
 from rich.console import Console, Group
 from rich.panel import Panel
 
@@ -341,6 +342,33 @@ def test_prompt_uses_framed_input_and_placeholder(tmp_path):
 
     assert session._prompt_session.show_frame is True
     assert session._prompt_session.placeholder
+
+
+def test_prompt_animates_lab_members_without_moving_cursor(tmp_path, monkeypatch):
+    monkeypatch.setattr("pi.tui.interactive.time.monotonic", lambda: 0.0)
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        history_file=tmp_path / "history",
+    )
+
+    ready_prompt = session._input_prompt()
+    ready_state = fragment_list_to_text(session._input_state())
+    ready_style = session._prompt_session.style
+
+    session._set_request_active(True)
+    working_prompt = session._input_prompt()
+    working_state = fragment_list_to_text(session._input_state())
+
+    assert "牧濑红莉栖" in fragment_list_to_text(ready_prompt)
+    assert "凤凰院凶真" in fragment_list_to_text(working_prompt)
+    assert "LabMem 004" in ready_state and "Ready" in ready_state
+    assert "LabMem 001" in working_state and "Working" in working_state
+    assert fragment_list_width(ready_prompt) == fragment_list_width(working_prompt)
+    assert session._prompt_session.style is not ready_style
+    assert session._prompt_session.refresh_interval == 0.125
 
 
 def test_file_history_does_not_store_likely_api_keys(tmp_path):

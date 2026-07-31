@@ -10,6 +10,7 @@ import asyncio
 import inspect
 import signal
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -55,22 +56,32 @@ from pi.coding_agent.skills import Skill
 from pi.coding_agent.themes import Theme
 from pi.tui.selector import select_option
 
-_PROMPT_STYLE = Style.from_dict(
-    {
-        "frame.border": "#3b82f6",
-        "input.prompt": "bold #60a5fa",
-        "input.placeholder": "#6b7280",
-        "input.ready": "bold #a3e635",
-        "input.working": "bold #fbbf24",
-        "bottom-toolbar": "bg:#171717 #d1d5db",
-        "status.brand": "bold bg:#2563eb #ffffff",
-        "status.model": "bold #22d3ee",
-        "status.thinking": "#c084fc",
-        "status.context": "#a3e635",
-        "status.meta": "#9ca3af",
-        "status.separator": "#525252",
-    }
+_PROMPT_STYLE_RULES = {
+    "input.prompt": "bold #e5e7eb",
+    "input.placeholder": "italic #6b7280",
+    "input.motion": "bold #67e8f9",
+    "input.kurisu": "bold #f472b6",
+    "input.kyouma": "bold #fbbf24",
+    "input.ready": "bold #a3e635",
+    "input.working": "bold #fbbf24",
+    "input.labmem": "#9ca3af",
+    "bottom-toolbar": "bg:#171717 #d1d5db",
+    "status.brand": "bold bg:#2563eb #ffffff",
+    "status.model": "bold #22d3ee",
+    "status.thinking": "#c084fc",
+    "status.context": "#a3e635",
+    "status.meta": "#9ca3af",
+    "status.separator": "#525252",
+}
+_PROMPT_STYLE_READY = Style.from_dict(
+    {**_PROMPT_STYLE_RULES, "frame.border": "#22d3ee"}
 )
+_PROMPT_STYLE_WORKING = Style.from_dict(
+    {**_PROMPT_STYLE_RULES, "frame.border": "#f59e0b"}
+)
+_READY_ANIMATION = ("·", "•", "·", " ")
+_WORKING_ANIMATION = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+_ANIMATION_FPS = 8
 
 _PIY_LOGO = """       _ __   __
  _ __ (_)\\ \\ / /
@@ -253,15 +264,16 @@ class InteractiveSession:
         history = _SafeFileHistory(str(history_file)) if history_file else _SafeInMemoryHistory()
         interactive_terminal = sys.stdin.isatty() and sys.stdout.isatty()
         self._prompt_session: PromptSession[str] = PromptSession(
-            message=[("class:input.prompt", " > ")],
+            message=self._input_prompt,
             history=history,
             auto_suggest=AutoSuggestFromHistory(),
             completer=WordCompleter(sorted(command_names), sentence=True),
             complete_while_typing=False,
-            placeholder=[("class:input.placeholder", "Type a message or /command")],
+            placeholder=[("class:input.placeholder", "Message across the world line or /command")],
             rprompt=self._input_state,
             show_frame=True,
-            style=_PROMPT_STYLE,
+            style=_PROMPT_STYLE_READY,
+            refresh_interval=1 / _ANIMATION_FPS,
             input=None if interactive_terminal else DummyInput(),
             output=None if interactive_terminal else DummyOutput(),
         )
@@ -362,11 +374,45 @@ class InteractiveSession:
             width=width,
         )
 
+    def _animation_frame(self, frames: tuple[str, ...]) -> str:
+        """返回固定宽度的动画帧，避免刷新时移动输入光标。"""
+        return frames[int(time.monotonic() * _ANIMATION_FPS) % len(frames)]
+
+    def _input_prompt(self) -> StyleAndTextTuples:
+        """根据请求状态显示实验室成员主题输入提示。"""
+        if self._request_active:
+            frame = self._animation_frame(_WORKING_ANIMATION)
+            return [
+                ("class:input.motion", f" {frame} "),
+                ("class:input.kyouma", "凤凰院凶真"),
+                ("class:input.prompt", " > "),
+            ]
+        frame = self._animation_frame(_READY_ANIMATION)
+        return [
+            ("class:input.motion", f" {frame} "),
+            ("class:input.kurisu", "牧濑红莉栖"),
+            ("class:input.prompt", " > "),
+        ]
+
     def _input_state(self) -> StyleAndTextTuples:
         """显示当前输入区状态。"""
         if self._request_active:
-            return [("class:input.working", " Working ")]
-        return [("class:input.ready", " Ready ")]
+            return [
+                ("class:input.labmem", " LabMem 001 · "),
+                ("class:input.working", "Working "),
+            ]
+        return [
+            ("class:input.labmem", " LabMem 004 · "),
+            ("class:input.ready", "Ready "),
+        ]
+
+    def _set_request_active(self, active: bool) -> None:
+        """同步更新请求状态、输入框边框与动态提示。"""
+        self._request_active = active
+        self._prompt_session.style = (
+            _PROMPT_STYLE_WORKING if active else _PROMPT_STYLE_READY
+        )
+        self._refresh_prompt()
 
     def _refresh_prompt(self) -> None:
         """通知输入应用刷新状态，避免直接操作终端光标。"""
@@ -398,8 +444,7 @@ class InteractiveSession:
         try:
             await self._agent.prompt(prompt)
         finally:
-            self._request_active = False
-            self._refresh_prompt()
+            self._set_request_active(False)
             self._print_request_usage()
 
     async def _handle_command(self, prompt: str) -> tuple[bool, bool]:
@@ -690,9 +735,8 @@ class InteractiveSession:
                 self._console.print("Queued steering message.", style=self._theme.muted)
             return
         self._request_usage = Usage()
-        self._request_active = True
+        self._set_request_active(True)
         self._agent_task = asyncio.create_task(self._run_agent_prompt(prompt))
-        self._refresh_prompt()
 
     async def _on_event(self, event: AgentEvent) -> None:
         """处理 agent 事件用于显示。"""
