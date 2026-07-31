@@ -60,11 +60,10 @@ _PROMPT_STYLE_RULES = {
     "input.prompt": "bold #e5e7eb",
     "input.placeholder": "italic #6b7280",
     "input.motion": "bold #67e8f9",
-    "input.kurisu": "bold #f472b6",
-    "input.kyouma": "bold #fbbf24",
+    "input.brand": "bold #60a5fa",
+    "input.separator": "#6b7280",
     "input.ready": "bold #a3e635",
     "input.working": "bold #fbbf24",
-    "input.labmem": "#9ca3af",
     "bottom-toolbar": "bg:#171717 #d1d5db",
     "status.brand": "bold bg:#2563eb #ffffff",
     "status.model": "bold #22d3ee",
@@ -290,7 +289,7 @@ class InteractiveSession:
             auto_suggest=AutoSuggestFromHistory(),
             completer=WordCompleter(sorted(command_names), sentence=True),
             complete_while_typing=False,
-            placeholder=[("class:input.placeholder", "Message across the world line or /command")],
+            placeholder=[("class:input.placeholder", "Type a message or /command")],
             show_frame=True,
             style=_PROMPT_STYLE_READY,
             refresh_interval=1 / _ANIMATION_FPS,
@@ -399,21 +398,21 @@ class InteractiveSession:
         return frames[int(time.monotonic() * _ANIMATION_FPS) % len(frames)]
 
     def _input_prompt(self) -> StyleAndTextTuples:
-        """根据请求状态显示实验室成员主题输入提示。"""
+        """根据请求状态显示带动画的输入提示。"""
         if self._request_active:
             frame = self._animation_frame(_WORKING_ANIMATION)
             return [
                 ("class:input.motion", f" {frame} "),
-                ("class:input.kyouma", "凤凰院凶真"),
-                ("class:input.labmem", " · "),
+                ("class:input.brand", "piY"),
+                ("class:input.separator", " · "),
                 ("class:input.working", "Working"),
                 ("class:input.prompt", " > "),
             ]
         frame = self._animation_frame(_READY_ANIMATION)
         return [
             ("class:input.motion", f" {frame} "),
-            ("class:input.kurisu", "牧濑红莉栖"),
-            ("class:input.labmem", " · "),
+            ("class:input.brand", "piY"),
+            ("class:input.separator", " · "),
             ("class:input.ready", "Ready  "),
             ("class:input.prompt", " > "),
         ]

@@ -345,7 +345,7 @@ def test_prompt_uses_framed_input_and_placeholder(tmp_path):
     assert session._prompt_session.placeholder
 
 
-def test_prompt_animates_lab_members_without_moving_cursor(tmp_path, monkeypatch):
+def test_prompt_animates_status_without_moving_cursor(tmp_path, monkeypatch):
     monkeypatch.setattr("pi.tui.interactive.time.monotonic", lambda: 0.0)
     session = InteractiveSession(
         model=list_models()[0],
@@ -363,8 +363,8 @@ def test_prompt_animates_lab_members_without_moving_cursor(tmp_path, monkeypatch
     working_prompt = session._input_prompt()
     working_text = fragment_list_to_text(working_prompt)
 
-    assert "牧濑红莉栖" in ready_text and "Ready" in ready_text
-    assert "凤凰院凶真" in working_text and "Working" in working_text
+    assert "piY" in ready_text and "Ready" in ready_text
+    assert "piY" in working_text and "Working" in working_text
     assert fragment_list_width(ready_prompt) == fragment_list_width(working_prompt)
     assert session._prompt_session.rprompt is None
     assert session._prompt_session.style is not ready_style
