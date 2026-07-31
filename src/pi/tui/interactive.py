@@ -311,7 +311,7 @@ class InteractiveSession:
             history=history,
             auto_suggest=AutoSuggestFromHistory(),
             completer=WordCompleter(sorted(command_names), sentence=True),
-            complete_while_typing=False,
+            complete_while_typing=True,
             placeholder=[("class:input.placeholder", "Type a message or /command")],
             show_frame=False,
             style=_PROMPT_STYLE_READY,

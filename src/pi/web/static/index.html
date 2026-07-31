@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>piY Web</title>
+    <link rel="stylesheet" href="/styles.css?v=2">
+  </head>
+  <body>
+    <!--
+      THESIS: piY Web is an engineering signal desk, not a generic chat shell.
+      OWN-WORLD: cool paper and graphite surfaces, measured rules, cyan live signals, yellow pending states, compact instrument controls.
+      STORY: choose a local session, work with the agent, inspect its tools, and keep repository files in the same field of view.
+      FIRST VIEWPORT: session/file rail left, uninterrupted conversation center, live file or run inspector right; the composer anchors the work surface.
+      FORM: ranked direction 4, a fixed work floor with perimeter tool rails; direction seed b8681107.
+    -->
+    <svg class="icon-sprite" aria-hidden="true">
+      <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+      <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z"/></symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24"><path d="M3 7V6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v2M3 10h18l-2 9H5z"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></symbol>
+      <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14"/></symbol>
+      <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+      <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+      <symbol id="i-panel-right" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2z"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4zM22 2 11 13"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 15H6L5 6M10 11v6M14 11v6"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></symbol>
+      <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l2-7 4 14 2-7h6"/></symbol>
+    </svg>
+
+    <div id="app" class="app-shell">
+      <header class="topbar">
+        <button id="mobileMenuButton" class="icon-button mobile-only" type="button" aria-label="打开导航">
+          <svg><use href="#i-menu"/></svg>
+        </button>
+        <div class="brand" aria-label="piY Web">
+          <span class="brand-mark" aria-hidden="true"><span>π</span><i>Y</i></span>
+          <span class="brand-name">piY</span>
+          <span class="brand-surface">WEB</span>
+        </div>
+        <div class="project-readout">
+          <span class="readout-label">WORKSPACE</span>
+          <span id="projectPath" class="project-path">—</span>
+        </div>
+        <div class="topbar-actions">
+          <div id="runStatus" class="run-status" data-state="ready">
+            <span class="status-light" aria-hidden="true"></span>
+            <span class="status-copy">READY</span>
+          </div>
+          <button id="themeButton" class="icon-button" type="button" aria-label="切换主题">
+            <svg class="sun-icon"><use href="#i-sun"/></svg>
+            <svg class="moon-icon"><use href="#i-moon"/></svg>
+          </button>
+          <button id="inspectorButton" class="icon-button" type="button" aria-label="切换检查器">
+            <svg><use href="#i-panel-right"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <aside id="leftRail" class="left-rail" aria-label="导航">
+          <div class="rail-segments" role="tablist" aria-label="工作区导航">
+            <button class="segment is-active" type="button" role="tab" aria-selected="true" data-rail-tab="sessions">
+              <svg><use href="#i-message"/></svg><span>会话</span>
+            </button>
+            <button class="segment" type="button" role="tab" aria-selected="false" data-rail-tab="files">
+              <svg><use href="#i-folder"/></svg><span>文件</span>
+            </button>
+          </div>
+
+          <section id="sessionsPanel" class="rail-panel">
+            <div class="rail-tools">
+              <label class="search-field">
+                <svg><use href="#i-search"/></svg>
+                <input id="sessionSearch" type="search" placeholder="搜索会话" autocomplete="off">
+              </label>
+              <button id="newSessionButton" class="icon-button accent-button" type="button" aria-label="新建会话">
+                <svg><use href="#i-plus"/></svg>
+              </button>
+            </div>
+            <div class="rail-heading">
+              <span>RECENT CHANNELS</span>
+              <button id="refreshSessionsButton" class="bare-icon" type="button" aria-label="刷新会话">
+                <svg><use href="#i-refresh"/></svg>
+              </button>
+            </div>
+            <div id="sessionList" class="session-list" aria-live="polite"></div>
+          </section>
+
+          <section id="filesPanel" class="rail-panel" hidden>
+            <div class="file-breadcrumb">
+              <button id="fileUpButton" class="icon-button" type="button" aria-label="上一级目录" disabled>
+                <svg><use href="#i-chevron-left"/></svg>
+              </button>
+              <button id="filePathButton" class="file-path-button" type="button">/</button>
+              <button id="refreshFilesButton" class="bare-icon" type="button" aria-label="刷新文件">
+                <svg><use href="#i-refresh"/></svg>
+              </button>
+            </div>
+            <div id="fileList" class="file-list" aria-live="polite"></div>
+          </section>
+        </aside>
+
+        <button id="scrim" class="scrim" type="button" aria-label="关闭导航" hidden></button>
+
+        <main class="chat-stage">
+          <header class="chat-header">
+            <div class="channel-title">
+              <span class="channel-sigil" aria-hidden="true">CH</span>
+              <div>
+                <h1 id="sessionTitle">新会话</h1>
+                <p id="sessionMeta">LOCAL CHANNEL · 0 MESSAGES</p>
+              </div>
+            </div>
+            <div class="chat-controls">
+              <label class="compact-select">
+                <span>MODEL</span>
+                <select id="modelSelect" aria-label="模型"></select>
+              </label>
+              <label class="compact-select thinking-select">
+                <span>THINK</span>
+                <select id="thinkingSelect" aria-label="思考级别">
+                  <option value="off">OFF</option>
+                  <option value="minimal">MIN</option>
+                  <option value="low">LOW</option>
+                  <option value="medium">MED</option>
+                  <option value="high">HIGH</option>
+                  <option value="xhigh">XHIGH</option>
+                  <option value="max">MAX</option>
+                </select>
+              </label>
+            </div>
+          </header>
+
+          <div id="messageViewport" class="message-viewport">
+            <div id="emptyState" class="empty-state">
+              <div class="empty-signal" aria-hidden="true">
+                <span></span><span></span><span></span><span></span><span></span>
+              </div>
+              <strong>CHANNEL OPEN</strong>
+              <span id="emptyPath">piY / local</span>
+            </div>
+            <div id="messageList" class="message-list"></div>
+          </div>
+
+          <div class="composer-zone">
+            <div class="composer-readout">
+              <span id="composerState">INPUT · READY</span>
+              <span id="characterCount">0</span>
+            </div>
+            <div class="composer">
+              <textarea id="promptInput" rows="1" placeholder="发送指令给 piY" aria-label="消息"></textarea>
+              <button id="sendButton" class="send-button" type="button" aria-label="发送消息">
+                <svg class="send-icon"><use href="#i-send"/></svg>
+                <svg class="stop-icon"><use href="#i-stop"/></svg>
+              </button>
+            </div>
+          </div>
+        </main>
+
+        <aside id="inspector" class="inspector" aria-label="检查器">
+          <header class="inspector-header">
+            <div>
+              <span class="inspector-kicker">INSPECTOR</span>
+              <strong id="inspectorTitle">运行信号</strong>
+            </div>
+            <button id="closeInspectorButton" class="icon-button" type="button" aria-label="关闭检查器">
+              <svg><use href="#i-x"/></svg>
+            </button>
+          </header>
+          <div id="signalInspector" class="signal-inspector">
+            <div class="scope-field" aria-hidden="true">
+              <svg viewBox="0 0 320 96" preserveAspectRatio="none">
+                <path class="scope-grid" d="M0 24H320M0 48H320M0 72H320M40 0V96M80 0V96M120 0V96M160 0V96M200 0V96M240 0V96M280 0V96"/>
+                <path id="scopeTrace" class="scope-trace" d="M0 50 L32 50 L42 50 L48 22 L55 76 L62 42 L72 50 L126 50 L134 34 L142 60 L150 50 L220 50 L229 44 L238 56 L246 50 L320 50"/>
+              </svg>
+              <span id="scopeLabel">IDLE SIGNAL</span>
+            </div>
+            <dl class="signal-table">
+              <div><dt>CHANNEL</dt><dd id="signalChannel">NEW</dd></div>
+              <div><dt>MODEL</dt><dd id="signalModel">—</dd></div>
+              <div><dt>REASONING</dt><dd id="signalThinking">OFF</dd></div>
+              <div><dt>MESSAGES</dt><dd id="signalMessages">0</dd></div>
+              <div><dt>STATE</dt><dd id="signalState">READY</dd></div>
+            </dl>
+            <div class="activity-log">
+              <div class="activity-heading"><span>ACTIVITY</span><svg><use href="#i-activity"/></svg></div>
+              <div id="activityList" class="activity-list">
+                <div class="activity-entry"><time>NOW</time><span>Workspace connected</span></div>
+              </div>
+            </div>
+          </div>
+          <div id="fileInspector" class="file-inspector" hidden>
+            <div class="file-inspector-toolbar">
+              <span id="fileInspectorPath"></span>
+              <button id="copyFileButton" class="bare-icon" type="button" aria-label="复制文件内容" hidden>
+                <svg><use href="#i-copy"/></svg>
+              </button>
+            </div>
+            <div id="filePreview" class="file-preview"></div>
+          </div>
+        </aside>
+      </div>
+
+      <div id="toastRegion" class="toast-region" aria-live="polite"></div>
+    </div>
+    <script src="/app.js?v=2" defer></script>
+  </body>
+</html>

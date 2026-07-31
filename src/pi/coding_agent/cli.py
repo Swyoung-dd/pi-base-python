@@ -197,6 +197,21 @@ async def print_auth_providers() -> None:
 @click.option("--no-context-files", is_flag=True, help="Disable AGENTS.md/CLAUDE.md discovery")
 @click.option("--theme", "theme_name", default=None, help="Terminal theme name or YAML file")
 @click.option("--rpc", "rpc_mode", is_flag=True, help="Run stdin/stdout JSONL RPC mode")
+@click.option("--web", "web_mode", is_flag=True, help="Run the local piY Web workspace")
+@click.option(
+    "--web-host",
+    default="127.0.0.1",
+    show_default=True,
+    help="Host for the local web server",
+)
+@click.option(
+    "--web-port",
+    default=43127,
+    type=click.IntRange(0, 65535),
+    show_default=True,
+    help="Port for the local web server (0 chooses a free port)",
+)
+@click.option("--no-open", "no_open", is_flag=True, help="Do not open the web browser")
 @click.option("--setup", "setup_config", is_flag=True, help="Run model setup and exit")
 @click.option(
     "--approve/--no-approve",
@@ -235,6 +250,10 @@ def main(
     no_context_files,
     theme_name,
     rpc_mode,
+    web_mode,
+    web_host,
+    web_port,
+    no_open,
     setup_config,
     project_trust,
     output_format,
@@ -298,7 +317,20 @@ def main(
     if theme_name:
         config.theme = theme_name
 
-    if rpc_mode:
+    if web_mode:
+        if rpc_mode or prompt_text is not None:
+            raise click.UsageError("--web cannot be combined with --rpc or --prompt")
+        from pi.web.server import serve_web
+
+        serve_web(
+            config=config,
+            cwd=project_dir,
+            host=web_host,
+            port=web_port,
+            open_browser=not no_open,
+            project_trusted=trusted,
+        )
+    elif rpc_mode:
         if prompt_text is not None:
             raise click.UsageError("--rpc cannot be combined with --prompt")
         from pi.coding_agent.rpc import serve_stdio
