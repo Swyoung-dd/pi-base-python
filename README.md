@@ -70,22 +70,6 @@ python -m pi --version
 
 在交互模式中执行 `/thinking` 可查看当前思考级别，执行 `/thinking high` 可切换并持久化级别。支持 reasoning 的模型会在状态栏显示 `thinking <level>`，模型返回的思考内容会显示在回答面板的 `Thinking` 区域。
 
-## Web 界面
-
-在项目目录中启动本地 Web 工作区：
-
-```bash
-piY --web
-```
-
-默认地址为 `http://127.0.0.1:43127`。Web 界面与终端模式共用 `.piy` 会话和模型配置，支持实时对话、历史会话、模型与思考级别切换、项目文件预览和深浅主题。
-
-```bash
-piY --web --no-open             # 不自动打开浏览器
-piY --web --web-port 8080       # 使用自定义端口
-piY --web --web-host 0.0.0.0    # 显式监听局域网地址
-```
-
 ## 打包
 
 版本号位于 `src/pi/__init__.py`。更新版本号后执行：
