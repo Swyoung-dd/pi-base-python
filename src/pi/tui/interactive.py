@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import signal
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -19,6 +20,7 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.formatted_text import StyleAndTextTuples
+from prompt_toolkit.formatted_text.utils import fragment_list_width
 from prompt_toolkit.history import FileHistory, InMemoryHistory
 from prompt_toolkit.input import DummyInput
 from prompt_toolkit.output import DummyOutput
@@ -60,11 +62,11 @@ _PROMPT_STYLE_RULES = {
     "input.prompt": "bold #e5e7eb",
     "input.placeholder": "italic #6b7280",
     "input.motion": "bold #67e8f9",
+    "input.border": "#22d3ee",
     "input.brand": "bold #60a5fa",
     "input.separator": "#6b7280",
     "input.ready": "bold #a3e635",
     "input.working": "bold #fbbf24",
-    "bottom-toolbar": "bg:#171717 #d1d5db",
     "status.brand": "bold bg:#2563eb #ffffff",
     "status.model": "bold #22d3ee",
     "status.thinking": "#c084fc",
@@ -73,10 +75,10 @@ _PROMPT_STYLE_RULES = {
     "status.separator": "#525252",
 }
 _PROMPT_STYLE_READY = Style.from_dict(
-    {**_PROMPT_STYLE_RULES, "frame.border": "#22d3ee"}
+    {**_PROMPT_STYLE_RULES, "input.border": "#22d3ee"}
 )
 _PROMPT_STYLE_WORKING = Style.from_dict(
-    {**_PROMPT_STYLE_RULES, "frame.border": "#f59e0b"}
+    {**_PROMPT_STYLE_RULES, "input.border": "#f59e0b"}
 )
 _READY_ANIMATION = ("·", "•", "·", " ")
 _WORKING_ANIMATION = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
@@ -122,6 +124,26 @@ def _split_complete_markdown(text: str) -> tuple[str, str]:
         if fence is None and not line.strip():
             boundary = offset
     return text[:boundary], text[boundary:]
+
+
+def _read_git_status(cwd: Path) -> tuple[str, int] | None:
+    """读取工作区 Git 分支和变更数量，非仓库目录返回空。"""
+    try:
+        result = subprocess.run(
+            ["git", "status", "--short", "--branch"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=1,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    lines = result.stdout.splitlines()
+    if result.returncode != 0 or not lines or not lines[0].startswith("## "):
+        return None
+    branch = lines[0].removeprefix("## ").split("...", maxsplit=1)[0].strip()
+    return branch, len(lines) - 1
 
 
 def _format_tool_display(tool_name: str, arguments: dict) -> str:
@@ -201,6 +223,7 @@ class InteractiveSession:
         on_thinking_selected: Callable[[ModelThinkingLevel], None] | None = None,
     ) -> None:
         self._cwd = (cwd or Path.cwd()).resolve()
+        self._git_status = _read_git_status(self._cwd)
         self._theme = theme or Theme()
         self._console = Console()
         self._agent = Agent(
@@ -290,7 +313,7 @@ class InteractiveSession:
             completer=WordCompleter(sorted(command_names), sentence=True),
             complete_while_typing=False,
             placeholder=[("class:input.placeholder", "Type a message or /command")],
-            show_frame=True,
+            show_frame=False,
             style=_PROMPT_STYLE_READY,
             refresh_interval=1 / _ANIMATION_FPS,
             input=None if interactive_terminal else DummyInput(),
@@ -398,24 +421,21 @@ class InteractiveSession:
         return frames[int(time.monotonic() * _ANIMATION_FPS) % len(frames)]
 
     def _input_prompt(self) -> StyleAndTextTuples:
-        """根据请求状态显示带动画的输入提示。"""
-        if self._request_active:
-            frame = self._animation_frame(_WORKING_ANIMATION)
-            return [
+        """构建状态轨道和开放式输入行。"""
+        status = self._input_status()
+        header: StyleAndTextTuples = [("class:input.border", "╭─"), *status]
+        fill_width = max(1, self._console.width - fragment_list_width(header) - 1)
+        header.append(("class:input.border", f"{'─' * fill_width}╮\n"))
+        frames = _WORKING_ANIMATION if self._request_active else _READY_ANIMATION
+        frame = self._animation_frame(frames)
+        header.extend(
+            [
+                ("class:input.border", "╰─"),
                 ("class:input.motion", f" {frame} "),
-                ("class:input.brand", "piY"),
-                ("class:input.separator", " · "),
-                ("class:input.working", "Working"),
-                ("class:input.prompt", " > "),
+                ("class:input.prompt", "❯ "),
             ]
-        frame = self._animation_frame(_READY_ANIMATION)
-        return [
-            ("class:input.motion", f" {frame} "),
-            ("class:input.brand", "piY"),
-            ("class:input.separator", " · "),
-            ("class:input.ready", "Ready  "),
-            ("class:input.prompt", " > "),
-        ]
+        )
+        return header
 
     def _set_request_active(self, active: bool) -> None:
         """同步更新请求状态、输入框边框与动态提示。"""
@@ -455,6 +475,7 @@ class InteractiveSession:
         try:
             await self._agent.prompt(prompt)
         finally:
+            self._git_status = await asyncio.to_thread(_read_git_status, self._cwd)
             self._set_request_active(False)
             self._print_request_usage()
 
@@ -829,51 +850,61 @@ class InteractiveSession:
                 style=self._theme.muted,
             )
 
-    def _bottom_toolbar(self) -> StyleAndTextTuples:
+    def _input_status(self) -> StyleAndTextTuples:
+        """按终端宽度生成输入框顶部状态轨道。"""
         model = self._agent.state.model
         model_name = model.name if model else "No model"
         session = self._session_id[:8] if self._session_id else "memory"
-        width = self._console.width
         context_usage = self._agent.get_context_usage()
         fragments: StyleAndTextTuples = [
-            ("class:status.brand", " piY "),
-            ("class:status.separator", " | "),
-            ("class:status.model", f"{model_name}"),
+            ("class:status.brand", " piY"),
+            (
+                "class:input.working" if self._request_active else "class:input.ready",
+                " ●",
+            ),
         ]
-        if width >= 72 and model is not None and model.reasoning:
-            fragments.extend(
-                [
-                    ("class:status.separator", " | "),
-                    ("class:status.thinking", f"thinking {self._agent.thinking_level.value}"),
-                ]
+        budget = max(16, self._console.width - 4)
+        available_model_width = max(8, budget - fragment_list_width(fragments) - 2)
+        if fragment_list_width([("", model_name)]) > available_model_width:
+            model_name = f"{model_name[: available_model_width - 1]}…"
+
+        items: dict[str, tuple[str, str]] = {
+            "model": ("class:status.model", f"◇ {model_name}"),
+            "session": ("class:status.meta", f"session {session}"),
+            "cwd": ("class:status.meta", f"▱ {self._cwd}"),
+        }
+        if model is not None and model.reasoning:
+            items["thinking"] = (
+                "class:status.thinking",
+                f"▣ {self._agent.thinking_level.value}",
             )
-        if width >= 52 and context_usage is not None:
-            fragments.extend(
-                [
-                    ("class:status.separator", " | "),
-                    (
-                        "class:status.context",
-                        f"ctx {_format_tokens(context_usage.tokens)}/"
-                        f"{_format_tokens(context_usage.context_window)} "
-                        f"{context_usage.percent:.1f}%",
-                    ),
-                ]
+        if self._git_status is not None:
+            branch, changes = self._git_status
+            dirty = f" +{changes}" if changes else ""
+            items["git"] = ("class:status.meta", f"○ {branch}{dirty}")
+        if context_usage is not None:
+            items["context"] = (
+                "class:status.context",
+                f"ctx {_format_tokens(context_usage.tokens)}/"
+                f"{_format_tokens(context_usage.context_window)} "
+                f"{context_usage.percent:.1f}%",
             )
-        if width >= 100:
-            fragments.extend(
-                [
-                    ("class:status.separator", " | "),
-                    ("class:status.meta", f"session {session}"),
-                ]
-            )
-        if width >= 130:
-            fragments.extend(
-                [
-                    ("class:status.separator", " | "),
-                    ("class:status.meta", str(self._cwd)),
-                ]
-            )
-        fragments.append(("class:status.meta", " "))
+
+        selected = {"model"}
+        used_width = fragment_list_width(fragments) + 2 + fragment_list_width([items["model"]])
+        for key in ("context", "thinking", "git", "cwd", "session"):
+            item = items.get(key)
+            if item is None:
+                continue
+            item_width = 2 + fragment_list_width([item])
+            if used_width + item_width <= budget:
+                selected.add(key)
+                used_width += item_width
+
+        for key in ("model", "thinking", "cwd", "git", "context", "session"):
+            if key in selected:
+                fragments.append(("class:status.separator", "  "))
+                fragments.append(items[key])
         return fragments
 
     async def _restore_session_model(self) -> None:
@@ -932,9 +963,7 @@ class InteractiveSession:
             while True:
                 try:
                     with patch_stdout(raw=True):
-                        prompt = await self._prompt_session.prompt_async(
-                            bottom_toolbar=self._bottom_toolbar,
-                        )
+                        prompt = await self._prompt_session.prompt_async()
                     if not prompt.strip():
                         continue
                     if contains_likely_api_key(prompt):

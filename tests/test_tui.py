@@ -33,8 +33,8 @@ async def _unused_stream(model, context, options):
     raise AssertionError("stream should not be called")
 
 
-def _toolbar_text(session: InteractiveSession) -> str:
-    return fragment_list_to_text(to_formatted_text(session._bottom_toolbar()))
+def _status_text(session: InteractiveSession) -> str:
+    return fragment_list_to_text(to_formatted_text(session._input_status()))
 
 
 async def test_model_command_updates_toolbar(tmp_path, monkeypatch):
@@ -65,9 +65,9 @@ async def test_model_command_updates_toolbar(tmp_path, monkeypatch):
     )
 
     assert handled and not should_exit
-    session._console = Console(width=120)
-    assert replacement.name in _toolbar_text(session)
-    assert "test-ses" in _toolbar_text(session)
+    session._console = Console(width=160)
+    assert replacement.name in _status_text(session)
+    assert "test-ses" in _status_text(session)
     assert selected_models == [replacement]
     assert await resolve_stored_api_key(replacement.provider, store) == "new-key"
 
@@ -88,7 +88,7 @@ async def test_thinking_command_updates_toolbar_and_persists_selection(tmp_path)
 
     assert handled and not should_exit
     assert session._agent.thinking_level.value == "high"
-    assert "thinking high" in _toolbar_text(session)
+    assert "▣ high" in _status_text(session)
     assert [level.value for level in selected_levels] == ["high"]
 
 
@@ -152,7 +152,7 @@ async def test_model_command_is_restored_from_session(tmp_path, monkeypatch):
     await restored._agent.restore()
     await restored._restore_session_model()
 
-    assert replacement.name in _toolbar_text(restored)
+    assert replacement.name in _status_text(restored)
 
 
 async def test_new_session_records_current_model(tmp_path):
@@ -198,7 +198,7 @@ def test_toolbar_shows_context_usage_and_percentage(tmp_path):
         )
     )
 
-    toolbar = _toolbar_text(session)
+    toolbar = _status_text(session)
 
     assert f"ctx 10k/{_format_tokens(model.context_window)}" in toolbar
     assert f"{10_000 / model.context_window * 100:.1f}%" in toolbar
@@ -215,7 +215,7 @@ def test_toolbar_prioritizes_core_status_on_narrow_terminal(tmp_path):
     )
     session._console = Console(width=60)
 
-    toolbar = _toolbar_text(session)
+    toolbar = _status_text(session)
 
     assert len(toolbar.splitlines()[0]) <= 60
     assert "ctx " in toolbar
@@ -327,12 +327,12 @@ async def test_model_command_selects_model_and_prompts_for_api_key(tmp_path, mon
     handled, should_exit = await session._handle_command("/model")
 
     assert handled and not should_exit
-    assert selected_model.name in _toolbar_text(session)
+    assert selected_model.name in _status_text(session)
     assert await resolve_stored_api_key("deepseek", store) == "deepseek-secret"
     assert prompt_messages == ["deepseek API key: "]
 
 
-def test_prompt_uses_framed_input_and_placeholder(tmp_path):
+def test_prompt_uses_open_status_frame_and_placeholder(tmp_path):
     session = InteractiveSession(
         model=list_models()[0],
         system_prompt="",
@@ -341,8 +341,12 @@ def test_prompt_uses_framed_input_and_placeholder(tmp_path):
         history_file=tmp_path / "history",
     )
 
-    assert session._prompt_session.show_frame is True
+    prompt = fragment_list_to_text(session._input_prompt())
+
+    assert session._prompt_session.show_frame is False
     assert session._prompt_session.placeholder
+    assert prompt.startswith("╭─")
+    assert "\n╰─" in prompt
 
 
 def test_prompt_animates_status_without_moving_cursor(tmp_path, monkeypatch):
@@ -356,19 +360,40 @@ def test_prompt_animates_status_without_moving_cursor(tmp_path, monkeypatch):
     )
 
     ready_prompt = session._input_prompt()
-    ready_text = fragment_list_to_text(ready_prompt)
+    ready_status = session._input_status()
     ready_style = session._prompt_session.style
 
     session._set_request_active(True)
     working_prompt = session._input_prompt()
-    working_text = fragment_list_to_text(working_prompt)
+    working_status = session._input_status()
 
-    assert "piY" in ready_text and "Ready" in ready_text
-    assert "piY" in working_text and "Working" in working_text
+    assert any(style == "class:input.ready" for style, _ in ready_status)
+    assert any(style == "class:input.working" for style, _ in working_status)
     assert fragment_list_width(ready_prompt) == fragment_list_width(working_prompt)
     assert session._prompt_session.rprompt is None
     assert session._prompt_session.style is not ready_style
     assert session._prompt_session.refresh_interval == 0.125
+
+
+def test_input_status_shows_git_and_fits_terminal_width(tmp_path):
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        cwd=tmp_path,
+        session_id="test-session",
+        history_file=tmp_path / "history",
+    )
+    session._git_status = ("main", 2)
+    session._console = Console(width=160)
+
+    status = _status_text(session)
+    header = fragment_list_to_text(session._input_prompt()).splitlines()[0]
+
+    assert "○ main +2" in status
+    assert str(tmp_path) in status
+    assert fragment_list_width([("", header)]) == 160
 
 
 def test_file_history_does_not_store_likely_api_keys(tmp_path):
@@ -443,7 +468,7 @@ async def test_streaming_answer_is_rendered_in_body_without_toolbar_preview(
     await session._on_event(MessageStartEvent(message=message))
     await session._on_event(TextDeltaUpdateEvent(delta="partial"))
 
-    assert "partial" not in _toolbar_text(session)
+    assert "partial" not in _status_text(session)
     session._console.print.assert_not_called()
 
     await session._on_event(MessageEndEvent(message=message))
@@ -573,7 +598,7 @@ async def test_thinking_is_rendered_in_body_before_tool_calls(tmp_path):
     )
 
     await session._on_event(ThinkingDeltaUpdateEvent(delta="checking project files"))
-    assert "checking project files" not in _toolbar_text(session)
+    assert "checking project files" not in _status_text(session)
 
     await session._on_event(MessageEndEvent(message=message))
 
