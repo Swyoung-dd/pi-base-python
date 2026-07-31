@@ -478,6 +478,7 @@ class InteractiveSession:
             self._git_status = await asyncio.to_thread(_read_git_status, self._cwd)
             self._set_request_active(False)
             self._print_request_usage()
+            self._console.print()
 
     async def _handle_command(self, prompt: str) -> tuple[bool, bool]:
         """处理斜杠命令，返回（是否已处理，是否退出）。"""

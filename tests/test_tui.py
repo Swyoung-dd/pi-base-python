@@ -679,3 +679,27 @@ async def test_turn_usage_is_aggregated_before_display(tmp_path):
         "300 in / 50 out / 350 total tokens / 50 cached",
         style=session._theme.muted,
     )
+
+
+async def test_request_completion_adds_space_before_next_input(tmp_path, monkeypatch):
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        history_file=tmp_path / "history",
+    )
+    session._request_usage = Usage(input=10, output=2, total_tokens=12)
+    session._console.print = Mock()
+
+    async def complete(prompt):
+        assert prompt == "hello"
+
+    monkeypatch.setattr(session._agent, "prompt", complete)
+    monkeypatch.setattr("pi.tui.interactive._read_git_status", lambda cwd: None)
+
+    await session._run_agent_prompt("hello")
+
+    assert session._console.print.call_count == 2
+    assert session._console.print.call_args_list[-1].args == ()
+    assert session._console.print.call_args_list[-1].kwargs == {}
