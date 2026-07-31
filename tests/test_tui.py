@@ -356,18 +356,17 @@ def test_prompt_animates_lab_members_without_moving_cursor(tmp_path, monkeypatch
     )
 
     ready_prompt = session._input_prompt()
-    ready_state = fragment_list_to_text(session._input_state())
+    ready_text = fragment_list_to_text(ready_prompt)
     ready_style = session._prompt_session.style
 
     session._set_request_active(True)
     working_prompt = session._input_prompt()
-    working_state = fragment_list_to_text(session._input_state())
+    working_text = fragment_list_to_text(working_prompt)
 
-    assert "牧濑红莉栖" in fragment_list_to_text(ready_prompt)
-    assert "凤凰院凶真" in fragment_list_to_text(working_prompt)
-    assert "LabMem 004" in ready_state and "Ready" in ready_state
-    assert "LabMem 001" in working_state and "Working" in working_state
+    assert "牧濑红莉栖" in ready_text and "Ready" in ready_text
+    assert "凤凰院凶真" in working_text and "Working" in working_text
     assert fragment_list_width(ready_prompt) == fragment_list_width(working_prompt)
+    assert session._prompt_session.rprompt is None
     assert session._prompt_session.style is not ready_style
     assert session._prompt_session.refresh_interval == 0.125
 

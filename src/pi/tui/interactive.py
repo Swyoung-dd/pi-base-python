@@ -291,7 +291,6 @@ class InteractiveSession:
             completer=WordCompleter(sorted(command_names), sentence=True),
             complete_while_typing=False,
             placeholder=[("class:input.placeholder", "Message across the world line or /command")],
-            rprompt=self._input_state,
             show_frame=True,
             style=_PROMPT_STYLE_READY,
             refresh_interval=1 / _ANIMATION_FPS,
@@ -406,25 +405,17 @@ class InteractiveSession:
             return [
                 ("class:input.motion", f" {frame} "),
                 ("class:input.kyouma", "凤凰院凶真"),
+                ("class:input.labmem", " · "),
+                ("class:input.working", "Working"),
                 ("class:input.prompt", " > "),
             ]
         frame = self._animation_frame(_READY_ANIMATION)
         return [
             ("class:input.motion", f" {frame} "),
             ("class:input.kurisu", "牧濑红莉栖"),
+            ("class:input.labmem", " · "),
+            ("class:input.ready", "Ready  "),
             ("class:input.prompt", " > "),
-        ]
-
-    def _input_state(self) -> StyleAndTextTuples:
-        """显示当前输入区状态。"""
-        if self._request_active:
-            return [
-                ("class:input.labmem", " LabMem 001 · "),
-                ("class:input.working", "Working "),
-            ]
-        return [
-            ("class:input.labmem", " LabMem 004 · "),
-            ("class:input.ready", "Ready "),
         ]
 
     def _set_request_active(self, active: bool) -> None:
