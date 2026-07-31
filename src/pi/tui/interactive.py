@@ -104,6 +104,27 @@ def _format_tokens(tokens: int) -> str:
     return f"{round(tokens / 1_000_000)}m"
 
 
+def _split_complete_markdown(text: str) -> tuple[str, str]:
+    """按围栏外的空行切分可安全渲染的 Markdown 前缀。"""
+    boundary = 0
+    offset = 0
+    fence: str | None = None
+    for line in text.splitlines(keepends=True):
+        stripped = line.lstrip()
+        marker = "```" if stripped.startswith("```") else None
+        if marker is None and stripped.startswith("~~~"):
+            marker = "~~~"
+        if marker is not None:
+            if fence is None:
+                fence = marker
+            elif fence == marker:
+                fence = None
+        offset += len(line)
+        if fence is None and not line.strip():
+            boundary = offset
+    return text[:boundary], text[boundary:]
+
+
 def _format_tool_display(tool_name: str, arguments: dict) -> str:
     """根据工具名称和参数提取有意义的简短描述。"""
     path = arguments.get("path", "")
@@ -200,7 +221,7 @@ class InteractiveSession:
         self._agent.subscribe(self._on_event)
         self._current_text = ""
         self._current_thinking = ""
-        self._streamed_text = False
+        self._rendered_text = ""
         self._stream_buffer = ""
         self._thinking_printed = False
         self._agent_task: asyncio.Task[None] | None = None
@@ -744,7 +765,7 @@ class InteractiveSession:
         if event.type == "message_start":
             self._current_text = ""
             self._current_thinking = ""
-            self._streamed_text = False
+            self._rendered_text = ""
             self._stream_buffer = ""
             self._thinking_printed = False
         elif event.type == "text_delta":
@@ -753,15 +774,10 @@ class InteractiveSession:
                 self._thinking_printed = True
             self._current_text += event.delta
             self._stream_buffer += event.delta
-            if "\n" in self._stream_buffer:
-                complete, self._stream_buffer = self._stream_buffer.rsplit("\n", maxsplit=1)
-                self._console.print(
-                    f"{complete}\n",
-                    end="",
-                    markup=False,
-                    highlight=False,
-                )
-            self._streamed_text = True
+            complete, self._stream_buffer = _split_complete_markdown(self._stream_buffer)
+            if complete:
+                self._console.print(Markdown(complete))
+                self._rendered_text += complete
         elif event.type == "thinking_delta":
             self._current_thinking += event.delta
         elif event.type == "message_end":
@@ -775,18 +791,17 @@ class InteractiveSession:
                 for block in event.message.content
                 if isinstance(block, ThinkingContent) and block.thinking
             )
-            self._current_text = final_text or self._current_text
+            complete_text = final_text or self._current_text
             self._current_thinking = final_thinking or self._current_thinking
             tool_calls = [block for block in event.message.content if isinstance(block, ToolCall)]
-            if self._streamed_text:
-                if self._stream_buffer:
-                    self._console.print(
-                        self._stream_buffer,
-                        markup=False,
-                        highlight=False,
-                    )
-                self._stream_buffer = ""
-                self._current_text = ""
+            if complete_text.startswith(self._rendered_text):
+                pending_text = complete_text[len(self._rendered_text) :]
+            elif self._rendered_text:
+                pending_text = self._stream_buffer
+            else:
+                pending_text = complete_text
+            self._current_text = pending_text if pending_text.strip() else ""
+            self._stream_buffer = ""
             if self._thinking_printed:
                 self._current_thinking = ""
             renderable = self._message_renderable(tool_calls)
@@ -794,6 +809,7 @@ class InteractiveSession:
                 self._console.print(renderable)
             self._current_text = ""
             self._current_thinking = ""
+            self._rendered_text = ""
             self._refresh_prompt()
         elif event.type == "tool_execution_start":
             self._current_text = ""

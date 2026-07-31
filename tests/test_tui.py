@@ -7,6 +7,7 @@ import pytest
 from prompt_toolkit.formatted_text import fragment_list_to_text, to_formatted_text
 from prompt_toolkit.formatted_text.utils import fragment_list_width
 from rich.console import Console, Group
+from rich.markdown import Markdown
 from rich.panel import Panel
 
 from pi.agent.session import JsonlStorage
@@ -427,7 +428,7 @@ async def test_non_streaming_text_message_is_rendered_once(tmp_path):
     assert isinstance(session._console.print.call_args.args[0], Group)
 
 
-async def test_streaming_answer_is_appended_to_body_without_toolbar_preview(
+async def test_streaming_answer_is_rendered_in_body_without_toolbar_preview(
     tmp_path,
 ):
     session = InteractiveSession(
@@ -448,11 +449,12 @@ async def test_streaming_answer_is_appended_to_body_without_toolbar_preview(
 
     await session._on_event(MessageEndEvent(message=message))
 
-    session._console.print.assert_called_once_with(
-        "partial",
-        markup=False,
-        highlight=False,
-    )
+    session._console.print.assert_called_once()
+    renderable = session._console.print.call_args.args[0]
+    assert isinstance(renderable, Group)
+    console = Console(record=True, width=80)
+    console.print(renderable)
+    assert "final answer" in console.export_text()
 
 
 async def test_thinking_precedes_streaming_answer_in_body(tmp_path):
@@ -501,7 +503,58 @@ async def test_streaming_answer_preserves_markdown_chunks(tmp_path):
         await session._on_event(TextDeltaUpdateEvent(delta=delta))
     await session._on_event(MessageEndEvent(message=message))
 
-    assert output.getvalue() == "| 文件 | 说明 |\n|---|---|\n| src | 主源码 |\n"
+    rendered = output.getvalue()
+    assert "文件" in rendered
+    assert "主源码" in rendered
+    assert "|---|---|" not in rendered
+
+
+async def test_streaming_markdown_renders_only_complete_blocks(tmp_path):
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        history_file=tmp_path / "history",
+    )
+    session._console.print = Mock()
+    text = "## 标题\n\n**状态：** 正常"
+    message = AgentAssistantMessage(content=[TextContent(text=text)])
+
+    await session._on_event(MessageStartEvent(message=message))
+    await session._on_event(TextDeltaUpdateEvent(delta="## 标题\n\n"))
+
+    session._console.print.assert_called_once()
+    assert isinstance(session._console.print.call_args.args[0], Markdown)
+
+    await session._on_event(TextDeltaUpdateEvent(delta="**状态：** 正常"))
+    assert session._console.print.call_count == 1
+
+    await session._on_event(MessageEndEvent(message=message))
+    assert session._console.print.call_count == 2
+    assert isinstance(session._console.print.call_args.args[0], Group)
+
+
+async def test_streaming_markdown_waits_for_closing_code_fence(tmp_path):
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        history_file=tmp_path / "history",
+    )
+    session._console.print = Mock()
+    message = AgentAssistantMessage(
+        content=[TextContent(text="```python\nprint('piY')\n\n```\n\n")]
+    )
+
+    await session._on_event(MessageStartEvent(message=message))
+    await session._on_event(TextDeltaUpdateEvent(delta="```python\nprint('piY')\n\n"))
+    session._console.print.assert_not_called()
+
+    await session._on_event(TextDeltaUpdateEvent(delta="```\n\n"))
+    session._console.print.assert_called_once()
+    assert isinstance(session._console.print.call_args.args[0], Markdown)
 
 
 async def test_thinking_is_rendered_in_body_before_tool_calls(tmp_path):
