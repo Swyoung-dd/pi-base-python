@@ -116,6 +116,9 @@ class LocalExecutionEnv(ExecutionEnv):
         return (self._cwd / p).resolve()
 
     async def read(self, path: str | Path, *, offset: int = 0, limit: int = 0) -> str:
+        return await asyncio.to_thread(self._read_sync, path, offset, limit)
+
+    def _read_sync(self, path, offset, limit):
         file_path = self.resolve(path)
         content = file_path.read_text(encoding="utf-8", errors="replace")
         if offset > 0 or limit > 0:
@@ -126,11 +129,17 @@ class LocalExecutionEnv(ExecutionEnv):
         return content
 
     async def write(self, path: str | Path, content: str) -> None:
+        await asyncio.to_thread(self._write_sync, path, content)
+
+    def _write_sync(self, path, content):
         file_path = self.resolve(path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content, encoding="utf-8")
 
     async def edit(self, path: str | Path, old_text: str, new_text: str) -> int:
+        return await asyncio.to_thread(self._edit_sync, path, old_text, new_text)
+
+    def _edit_sync(self, path, old_text, new_text):
         file_path = self.resolve(path)
         content = file_path.read_text(encoding="utf-8", errors="replace")
         count = content.count(old_text)
@@ -140,6 +149,9 @@ class LocalExecutionEnv(ExecutionEnv):
         return count
 
     async def stat(self, path: str | Path) -> FileInfo:
+        return await asyncio.to_thread(self._stat_sync, path)
+
+    def _stat_sync(self, path):
         file_path = self.resolve(path)
         st = file_path.stat()
         return FileInfo(
@@ -152,6 +164,9 @@ class LocalExecutionEnv(ExecutionEnv):
         )
 
     async def list_dir(self, path: str | Path, *, show_all: bool = False) -> list[FileInfo]:
+        return await asyncio.to_thread(self._list_dir_sync, path, show_all)
+
+    def _list_dir_sync(self, path, show_all):
         dir_path = self.resolve(path)
         result: list[FileInfo] = []
         for entry in sorted(dir_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
@@ -171,6 +186,9 @@ class LocalExecutionEnv(ExecutionEnv):
         return result
 
     async def find(self, path: str | Path, pattern: str, *, max_results: int = 100) -> list[str]:
+        return await asyncio.to_thread(self._find_sync, path, pattern, max_results)
+
+    def _find_sync(self, path, pattern, max_results):
         search_dir = self.resolve(path)
         results: list[str] = []
         for entry in sorted(search_dir.rglob("*")):
@@ -189,6 +207,9 @@ class LocalExecutionEnv(ExecutionEnv):
         include: str | None = None,
         max_results: int = 50,
     ) -> list[str]:
+        return await asyncio.to_thread(self._grep_sync, pattern, path, include, max_results)
+
+    def _grep_sync(self, pattern, path, include, max_results):
         search_path = self.resolve(path)
         regex = re.compile(pattern)
         results: list[str] = []
@@ -254,6 +275,9 @@ class LocalExecutionEnv(ExecutionEnv):
         return Path(path)
 
     async def read_image(self, path: str | Path) -> ImageContent:
+        return await asyncio.to_thread(self._read_image_sync, path)
+
+    def _read_image_sync(self, path):
         import base64
 
         file_path = self.resolve(path)

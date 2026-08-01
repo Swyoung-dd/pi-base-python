@@ -81,6 +81,14 @@ class CodingAgent:
                 )
             )
             self._started = False
+        self.tracer.close()
+
+    async def __aenter__(self) -> CodingAgent:
+        await self.start()
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        await self.close()
 
     async def _on_agent_event(self, event: AgentEvent) -> None:
         if event.type == "tool_execution_end" and event.result:

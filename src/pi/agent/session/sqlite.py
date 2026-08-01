@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import threading
@@ -23,10 +24,10 @@ class SqliteStorage(SessionStorage):
         self._leaf_id: str | None = None
         self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        self._init_db()
+        self._init_db_sync()
         self._load_leaf()
 
-    def _init_db(self) -> None:
+    def _init_db_sync(self) -> None:
         with self._lock:
             self._conn.execute("""
                 CREATE TABLE IF NOT EXISTS entries (
@@ -35,8 +36,7 @@ class SqliteStorage(SessionStorage):
                     type TEXT NOT NULL DEFAULT "message",
                     message TEXT,
                     data TEXT,
-                    timestamp TEXT,
-                    seq INTEGER AUTOINCREMENT
+                    timestamp TEXT
                 )
             """)
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_parent ON entries(parent_id)")
@@ -57,6 +57,9 @@ class SqliteStorage(SessionStorage):
                 self._leaf_id = row["value"]
 
     async def append(self, entry: SessionEntry) -> str:
+        return await asyncio.to_thread(self._append_sync, entry)
+
+    def _append_sync(self, entry: SessionEntry) -> str:
         d = entry.to_dict()
         with self._lock:
             self._conn.execute(
@@ -78,6 +81,9 @@ class SqliteStorage(SessionStorage):
         return entry.id
 
     async def get(self, entry_id: str) -> SessionEntry | None:
+        return await asyncio.to_thread(self._get_sync, entry_id)
+
+    def _get_sync(self, entry_id: str) -> SessionEntry | None:
         with self._lock:
             row = self._conn.execute("SELECT * FROM entries WHERE id = ?", (entry_id,)).fetchone()
         if row is None:
@@ -85,11 +91,17 @@ class SqliteStorage(SessionStorage):
         return self._row_to_entry(row)
 
     async def get_entries(self) -> list[SessionEntry]:
+        return await asyncio.to_thread(self._get_entries_sync)
+
+    def _get_entries_sync(self) -> list[SessionEntry]:
         with self._lock:
             rows = self._conn.execute("SELECT * FROM entries ORDER BY rowid").fetchall()
         return [self._row_to_entry(r) for r in rows]
 
     async def get_branch(self) -> list[SessionEntry]:
+        return await asyncio.to_thread(self._get_branch_sync)
+
+    def _get_branch_sync(self) -> list[SessionEntry]:
         if self._leaf_id is None:
             return []
         chain: list[SessionEntry] = []
@@ -111,6 +123,9 @@ class SqliteStorage(SessionStorage):
         return self._leaf_id
 
     async def set_leaf_id(self, entry_id: str) -> None:
+        await asyncio.to_thread(self._set_leaf_id_sync, entry_id)
+
+    def _set_leaf_id_sync(self, entry_id: str) -> None:
         with self._lock:
             self._conn.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,6 +38,13 @@ _TOOL_LABELS = {
     "write": "Write",
 }
 
+_TOOL_ERROR_PREVIEW_LINES = 8
+_EXIT_CODE_RE = re.compile(r"^\s*Exit code:\s*(-?\d+)\s*$", re.IGNORECASE)
+_DIAGNOSTIC_RE = re.compile(
+    r"(?:\b(?:fatal|failed|error)\b|\b[\w.]+(?:Error|Exception)\b)",
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class MessageRenderState:
@@ -62,6 +70,72 @@ class RenderOutcome:
 
     refresh_prompt: bool = False
     usage: Usage | None = None
+
+
+@dataclass(frozen=True)
+class ToolErrorPreview:
+    """工具失败结果的紧凑展示数据。"""
+
+    exit_code: str | None
+    lead: str | None
+    tail: tuple[str, ...]
+    hidden_lines: int = 0
+
+
+def summarize_tool_error(text: str, max_lines: int = _TOOL_ERROR_PREVIEW_LINES) -> ToolErrorPreview:
+    """提取退出码、关键异常和末尾摘要，避免长错误淹没对话。"""
+    exit_code = None
+    lines: list[str] = []
+    for raw_line in text.replace("\r\n", "\n").replace("\r", "\n").splitlines():
+        line = raw_line.rstrip()
+        match = _EXIT_CODE_RE.match(line)
+        if match:
+            exit_code = match.group(1)
+        elif line.strip() and line.strip().upper() != "STDERR:":
+            lines.append(line)
+
+    if len(lines) <= max_lines:
+        return ToolErrorPreview(exit_code, None, tuple(lines))
+
+    tail_size = max(1, max_lines - 1)
+    prefix = lines[:-tail_size]
+    lead = next(
+        (
+            line
+            for line in reversed(prefix)
+            if _DIAGNOSTIC_RE.search(line) and "warning" not in line.lower()
+        ),
+        None,
+    )
+    if lead is None:
+        tail_size = max_lines
+    tail = tuple(lines[-tail_size:])
+    hidden_lines = len(lines) - len(tail) - (1 if lead is not None else 0)
+    return ToolErrorPreview(exit_code, lead, tail, hidden_lines)
+
+
+def build_tool_error_renderable(
+    tool_name: str,
+    text: str,
+    theme: Theme,
+) -> RenderableType:
+    """构建层级清晰且不会解析工具输出为 Rich markup 的失败摘要。"""
+    preview = summarize_tool_error(text)
+    label = _TOOL_LABELS.get(tool_name, tool_name)
+    title = Text.assemble(("! ", theme.error), (f"{label} failed", theme.error))
+    if preview.exit_code is not None:
+        title.append(f" (exit {preview.exit_code})", style=theme.muted)
+
+    details = Text(style=theme.muted)
+    if preview.lead is not None:
+        details.append(f"  {preview.lead}\n")
+    if preview.hidden_lines:
+        details.append(f"  ... {preview.hidden_lines} earlier lines hidden\n")
+    for index, line in enumerate(preview.tail):
+        details.append(f"  {line}")
+        if index < len(preview.tail) - 1:
+            details.append("\n")
+    return Group(title, details) if details.plain else title
 
 
 def build_tool_trees(tool_calls: list[ToolCall], theme: Theme) -> list[Tree]:
@@ -193,9 +267,10 @@ class AgentEventRenderer:
             return RenderOutcome(refresh_prompt=True)
         elif event.type == "tool_execution_end":
             if event.result and event.result.is_error:
-                for block in event.result.content:
-                    if hasattr(block, "text"):
-                        console.print(f"  error: {block.text}", style=theme.error)
+                text = "\n".join(
+                    block.text for block in event.result.content if isinstance(block, TextContent)
+                )
+                console.print(build_tool_error_renderable(event.tool_name, text, theme))
         elif event.type == "turn_end":
             if event.message.stop_reason == "aborted":
                 console.print("Aborted.", style=theme.muted)

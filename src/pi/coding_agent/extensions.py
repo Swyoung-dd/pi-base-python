@@ -6,6 +6,7 @@ import hashlib
 import importlib.metadata
 import importlib.util
 import inspect
+import logging
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -21,6 +22,7 @@ from pi.ai.types import Model
 
 ExtensionCommand = Callable[[str, Any], str | None | Awaitable[str | None]]
 ExtensionEventHandler = Callable[["ExtensionEvent", Any], None | Awaitable[None]]
+_logger = logging.getLogger("piy.extensions")
 
 
 def _utc_now() -> str:
@@ -93,6 +95,9 @@ class ExtensionContext:
     event_handlers: dict[str, list[tuple[str, ExtensionEventHandler]]] = field(default_factory=dict)
     _loading_source: str = field(default="extension", init=False, repr=False)
     _sources: list[ExtensionSource] = field(default_factory=list, init=False, repr=False)
+    _tool_sources: dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    _prompt_sources: list[str] = field(default_factory=list, init=False, repr=False)
+    _command_sources: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _context_transformers: list[tuple[str, Any]] = field(
         default_factory=list,
         init=False,
@@ -103,6 +108,7 @@ class ExtensionContext:
         if any(existing.name == tool.name for existing in self.tools):
             raise ValueError(f"Duplicate extension tool: {tool.name}")
         self.tools.append(tool)
+        self._tool_sources[tool.name] = self._loading_source
         self._check_conflicts()
 
     def add_model(self, model: Model) -> None:
@@ -114,6 +120,7 @@ class ExtensionContext:
     def add_system_prompt(self, text: str) -> None:
         if text.strip():
             self.system_prompt_sections.append(text.strip())
+            self._prompt_sources.append(self._loading_source)
 
     def add_command(self, name: str, command: ExtensionCommand) -> None:
         normalized = name.strip().lower().lstrip("/")
@@ -122,6 +129,7 @@ class ExtensionContext:
         if normalized in self.commands:
             raise ValueError(f"Duplicate extension command: {normalized}")
         self.commands[normalized] = command
+        self._command_sources[normalized] = self._loading_source
 
     def add_context_transformer(self, transformer: Any) -> None:
         """注册上下文变换器，在发送给模型前修改 system_prompt 或 messages。"""
@@ -146,8 +154,8 @@ class ExtensionContext:
                     result = await result
                 if isinstance(result, tuple) and len(result) == 2:
                     system_prompt, messages = result
-            except Exception:
-                pass
+            except Exception as exc:
+                _logger.warning("Context transformer from %s failed: %s", _source, exc)
         return system_prompt, messages
 
     def on(self, event_type: str, handler: ExtensionEventHandler) -> None:
@@ -201,6 +209,9 @@ class ExtensionContext:
         self.event_handlers.clear()
         self._context_transformers.clear()
         self._sources.clear()
+        self._tool_sources.clear()
+        self._prompt_sources.clear()
+        self._command_sources.clear()
         for source in saved_sources:
             if not source.active:
                 self._sources.append(source)
@@ -226,12 +237,42 @@ class ExtensionContext:
         return failures
 
     def unload(self, source_name: str) -> bool:
-        """卸载指定来源的扩展（标记为不活跃）。"""
+        """卸载指定来源的扩展，移除其注册的工具、提示、命令和事件处理器。"""
         found = False
         for source in self._sources:
             if source.name == source_name:
                 source.active = False
                 found = True
+        if not found:
+            return False
+        # Remove tools registered by this source
+        self.tools = [t for t in self.tools if self._tool_sources.get(t.name) != source_name]
+        self._tool_sources = {k: v for k, v in self._tool_sources.items() if v != source_name}
+        # Remove system prompt sections from this source
+        kept_prompts: list[str] = []
+        kept_prompt_sources: list[str] = []
+        for prompt, src in zip(self.system_prompt_sections, self._prompt_sources, strict=True):
+            if src != source_name:
+                kept_prompts.append(prompt)
+                kept_prompt_sources.append(src)
+        self.system_prompt_sections = kept_prompts
+        self._prompt_sources = kept_prompt_sources
+        # Remove commands from this source
+        self.commands = {
+            k: v for k, v in self.commands.items() if self._command_sources.get(k) != source_name
+        }
+        self._command_sources = {k: v for k, v in self._command_sources.items() if v != source_name}
+        # Remove event handlers from this source
+        for event_type in list(self.event_handlers):
+            self.event_handlers[event_type] = [
+                (src, h) for src, h in self.event_handlers[event_type] if src != source_name
+            ]
+            if not self.event_handlers[event_type]:
+                del self.event_handlers[event_type]
+        # Remove context transformers from this source
+        self._context_transformers = [
+            (src, t) for src, t in self._context_transformers if src != source_name
+        ]
         return found
 
     async def emit(

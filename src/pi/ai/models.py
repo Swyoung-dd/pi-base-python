@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import yaml
@@ -10,6 +11,7 @@ from pi.ai.models_generated import MODELS
 from pi.ai.types import Model
 
 _custom_models: dict[tuple[str, str], Model] = {}
+_logger = logging.getLogger("piy.models")
 
 
 def register_model(model: Model) -> None:
@@ -78,13 +80,16 @@ async def refresh_models(provider_id: str | None = None) -> list[Model]:
             if m.provider == pid and m.base_url:
                 base_url = m.base_url
                 break
+        endpoint, headers, api_style = _build_model_list_request(pid, base_url, api_key)
+        if endpoint is None:
+            _logger.debug("Provider %s does not support model listing, skipping", pid)
+            continue
         try:
-            headers = {"Authorization": f"Bearer {api_key}"}
             async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.get(f"{base_url.rstrip('/')}/models", headers=headers)
+                resp = await client.get(endpoint, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
-                for item in data.get("data", []):
+                for item in _extract_model_items(data, api_style):
                     model_id = item.get("id")
                     if not model_id:
                         continue
@@ -99,12 +104,53 @@ async def refresh_models(provider_id: str | None = None) -> list[Model]:
                                 base_url=base_url,
                             )
                         )
-        except Exception:
-            pass
+        except Exception as exc:
+            _logger.warning("Failed to refresh models for provider %s: %s", pid, exc)
     all_models = list_models()
     if provider_id:
         return [m for m in all_models if m.provider == provider_id]
     return all_models
+
+
+def _build_model_list_request(
+    provider_id: str,
+    base_url: str,
+    api_key: str,
+) -> tuple[str | None, dict[str, str], str]:
+    """Build the model-listing request for a provider.
+
+    Returns (endpoint, headers, api_style) or (None, {}, "") if unsupported.
+    """
+    url = base_url.rstrip("/")
+    if provider_id in ("openai", "deepseek", "zai", "kimi", "qwen"):
+        return (
+            f"{url}/models",
+            {"Authorization": f"Bearer {api_key}"},
+            "openai",
+        )
+    if provider_id == "anthropic":
+        return (
+            f"{url}/v1/models",
+            {
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+            },
+            "anthropic",
+        )
+    if provider_id in ("google", "vertex"):
+        return (
+            f"{url}/v1beta/models",
+            {"Authorization": f"Bearer {api_key}"},
+            "google",
+        )
+    return None, {}, ""
+
+
+def _extract_model_items(data: dict, api_style: str) -> list[dict]:
+    """Extract model items from provider response."""
+    if api_style == "google":
+        return data.get("models", [])
+    return data.get("data", [])
 
 
 def list_providers_safe() -> list[str]:
@@ -113,5 +159,6 @@ def list_providers_safe() -> list[str]:
         from pi.ai.providers.registry import list_providers
 
         return list_providers()
-    except Exception:
+    except Exception as exc:
+        _logger.debug("Failed to list providers: %s", exc)
         return []

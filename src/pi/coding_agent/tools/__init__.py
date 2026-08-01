@@ -1,6 +1,7 @@
 """内置编码工具：read、write、edit、bash、ls、find、grep、subagent。"""
 
 from pi.coding_agent.tools.bash import create_bash_tool
+from pi.coding_agent.tools.compact import create_compact_tool
 from pi.coding_agent.tools.edit import create_edit_tool
 from pi.coding_agent.tools.find import create_find_tool
 from pi.coding_agent.tools.grep import create_grep_tool
@@ -17,5 +18,6 @@ __all__ = [
     "create_ls_tool",
     "create_find_tool",
     "create_grep_tool",
+    "create_compact_tool",
     "create_subagent_tool",
 ]

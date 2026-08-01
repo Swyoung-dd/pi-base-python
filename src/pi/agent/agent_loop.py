@@ -121,7 +121,7 @@ def _validate_tool_arguments(
                 return (
                     f"Parameter '{field_name}' must be {expected_type}, got {type(value).__name__}"
                 )
-            enum_values = field_schema.get("enum")
+        enum_values = field_schema.get("enum")
         if enum_values and value not in enum_values:
             return f"Parameter '{field_name}' must be one of {enum_values}, got {value!r}"
     return None

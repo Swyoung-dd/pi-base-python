@@ -15,6 +15,7 @@ from pi.coding_agent.system_prompt import build_system_prompt
 from pi.coding_agent.themes import load_theme
 from pi.coding_agent.tools import (
     create_bash_tool,
+    create_compact_tool,
     create_edit_tool,
     create_find_tool,
     create_grep_tool,
@@ -35,6 +36,7 @@ def build_tools() -> list[AgentTool]:
         create_ls_tool(),
         create_find_tool(),
         create_grep_tool(),
+        create_compact_tool(),
         create_subagent_tool(),
     ]
 

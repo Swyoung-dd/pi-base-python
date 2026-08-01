@@ -160,7 +160,11 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
             transcript = truncate_output(format_messages_for_summary(tail), 20000)
             prompt = f"{task}\n\nParent conversation tail:\n{transcript}"
 
-    child_tool_context = ToolContext(cwd=ctx.cwd, state={"subagent_depth": depth + 1})
+    child_tool_context = ToolContext(
+        cwd=ctx.cwd,
+        env=ctx.ensure_env(),
+        state={"subagent_depth": depth + 1},
+    )
     child = Agent(
         AgentOptions(
             model=model,
