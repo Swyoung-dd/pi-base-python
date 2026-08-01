@@ -21,13 +21,16 @@ def main() -> None:
         scripts_dir = environment_dir / ("Scripts" if os.name == "nt" else "bin")
         python = scripts_dir / ("python.exe" if os.name == "nt" else "python")
         piy = scripts_dir / ("piY.exe" if os.name == "nt" else "piY")
+        environment = os.environ.copy()
+        environment["PYTHONIOENCODING"] = "utf-8"
 
         subprocess.run(
             [str(python), "-m", "pip", "install", str(wheels[0])],
             check=True,
+            env=environment,
         )
         for arguments in (["--version"], ["--help"], ["--list-models"]):
-            subprocess.run([str(piy), *arguments], check=True)
+            subprocess.run([str(piy), *arguments], check=True, env=environment)
 
 
 if __name__ == "__main__":

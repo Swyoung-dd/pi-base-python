@@ -189,4 +189,5 @@ Skill 正文不会全部预加载，只向模型暴露名称、描述和文件�
 | 场景装配 | `src/pi/coding_agent/runtime.py`、`sdk.py` |
 | 配置与项目信任 | `src/pi/coding_agent/config.py`、`project_trust.py` |
 | CLI / RPC | `src/pi/coding_agent/cli.py`、`rpc.py` |
-| TUI | `src/pi/tui/interactive.py` |
+| TUI 协调与公共入口 | `src/pi/tui/session.py`、`src/pi/tui/__init__.py` |
+| TUI 命令、渲染与输入 | `src/pi/tui/commands.py`、`rendering.py`、`prompt.py` |

@@ -98,7 +98,7 @@ async def run_interactive_mode(
     continue_latest: bool = False,
 ) -> None:
     """运行交互式 REPL 模式。"""
-    from pi.tui.interactive import InteractiveSession
+    from pi.tui import InteractiveSession
 
     model = _resolve_model(config)
 

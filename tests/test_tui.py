@@ -27,7 +27,9 @@ from pi.ai.types import ModelThinkingLevel, TextContent, ThinkingContent, ToolCa
 from pi.coding_agent.extensions import ExtensionContext
 from pi.coding_agent.prompt_templates import PromptTemplate
 from pi.coding_agent.themes import Theme
-from pi.tui.interactive import InteractiveSession, _format_tokens, _SafeFileHistory
+from pi.tui import InteractiveSession
+from pi.tui.formatting import format_tokens
+from pi.tui.history import SafeFileHistory
 
 
 async def _unused_stream(model, context, options):
@@ -100,7 +102,7 @@ async def test_thinking_command_uses_keyboard_selector(tmp_path, monkeypatch):
         assert title == "Thinking level"
         return ModelThinkingLevel.HIGH
 
-    monkeypatch.setattr("pi.tui.interactive.select_option", choose)
+    monkeypatch.setattr("pi.tui.session.select_option", choose)
     session = InteractiveSession(
         model=model,
         system_prompt="",
@@ -201,7 +203,7 @@ def test_toolbar_shows_context_usage_and_percentage(tmp_path):
 
     toolbar = _status_text(session)
 
-    assert f"ctx 10k/{_format_tokens(model.context_window)}" in toolbar
+    assert f"ctx 10k/{format_tokens(model.context_window)}" in toolbar
     assert f"{10_000 / model.context_window * 100:.1f}%" in toolbar
 
 
@@ -307,7 +309,7 @@ async def test_model_command_selects_model_and_prompts_for_api_key(tmp_path, mon
         assert title == "Select model"
         return selected_model
 
-    monkeypatch.setattr("pi.tui.interactive.select_option", choose)
+    monkeypatch.setattr("pi.tui.session.select_option", choose)
     prompt_messages = []
 
     async def prompt_api_key(message):
@@ -351,7 +353,7 @@ def test_prompt_uses_open_status_frame_and_placeholder(tmp_path):
 
 
 def test_prompt_animates_status_without_moving_cursor(tmp_path, monkeypatch):
-    monkeypatch.setattr("pi.tui.interactive.time.monotonic", lambda: 0.0)
+    monkeypatch.setattr("pi.tui.session.time.monotonic", lambda: 0.0)
     session = InteractiveSession(
         model=list_models()[0],
         system_prompt="",
@@ -401,7 +403,7 @@ def test_input_status_shows_git_and_fits_terminal_width(tmp_path):
 
 def test_file_history_does_not_store_likely_api_keys(tmp_path):
     path = tmp_path / "history"
-    history = _SafeFileHistory(str(path))
+    history = SafeFileHistory(str(path))
 
     history.store_string("normal prompt")
     history.store_string("sk-" + "a" * 32)
@@ -699,7 +701,7 @@ async def test_request_completion_adds_space_before_next_input(tmp_path, monkeyp
         assert prompt == "hello"
 
     monkeypatch.setattr(session._agent, "prompt", complete)
-    monkeypatch.setattr("pi.tui.interactive._read_git_status", lambda cwd: None)
+    monkeypatch.setattr("pi.tui.session._read_git_status", lambda cwd: None)
 
     await session._run_agent_prompt("hello")
 

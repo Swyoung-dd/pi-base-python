@@ -83,9 +83,9 @@ class PrintRenderer:
             click.echo(err=True)
             self._thinking_started = False
         elif event.type == "tool_execution_start":
-            from pi.tui.interactive import _format_tool_display
+            from pi.tui.formatting import format_tool_display
 
-            label = _format_tool_display(event.tool_name, event.arguments)
+            label = format_tool_display(event.tool_name, event.arguments)
             click.echo(f"\n[tool: {label}]", err=True)
         elif event.type == "tool_execution_end" and event.result and event.result.is_error:
             for block in event.result.content:

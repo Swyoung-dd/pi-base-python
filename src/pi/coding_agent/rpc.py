@@ -89,8 +89,6 @@ class RpcServer:
             return True
         if request_type == "shutdown":
             if self._prompt_task is not None and not self._prompt_task.done():
-                await asyncio.sleep(0)
-                self.runtime.agent.abort()
                 await self._prompt_task
             await self._send({"type": "response", "id": request_id, "ok": True})
             return False

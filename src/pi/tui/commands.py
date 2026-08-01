@@ -19,7 +19,7 @@ from pi.coding_agent.sessions import (
 )
 
 if TYPE_CHECKING:
-    from pi.tui.interactive import InteractiveSession
+    from pi.tui.session import InteractiveSession
 
 
 BUILTIN_COMMANDS = frozenset(
@@ -441,4 +441,3 @@ class CommandDispatcher:
             style=self._session._theme.warning,
         )
         return False
-
