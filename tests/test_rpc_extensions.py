@@ -20,8 +20,11 @@ async def _stream(model, context, options):
     stream = EventStream()
     message = AssistantMessage(
         content=[TextContent(text="ok")],
-        api=model.api, provider=model.provider, model=model.id,
-        stop_reason=StopReason.STOP, timestamp=1,
+        api=model.api,
+        provider=model.provider,
+        model=model.id,
+        stop_reason=StopReason.STOP,
+        timestamp=1,
     )
     await stream.push(TextDeltaEvent(delta="ok"))
     await stream.push(DoneEvent(message=message))
@@ -40,14 +43,18 @@ def _runtime(tmp_path):
         ),
         cwd=tmp_path,
         extensions=ExtensionContext(),
-        skills=[], prompt_templates=[], theme=Theme(),
+        skills=[],
+        prompt_templates=[],
+        theme=Theme(),
     )
 
 
 async def test_rpc_protocol_version(tmp_path):
     sent = []
+
     async def send(payload):
         sent.append(payload)
+
     server = RpcServer(_runtime(tmp_path), send)
     await server.start()
     assert sent[0]["protocol_version"] == RPC_PROTOCOL_VERSION
@@ -59,8 +66,10 @@ async def test_rpc_protocol_version(tmp_path):
 
 async def test_rpc_set_thinking_level(tmp_path):
     sent = []
+
     async def send(payload):
         sent.append(payload)
+
     server = RpcServer(_runtime(tmp_path), send)
     await server.start()
     await server.handle({"type": "set_thinking_level", "id": "tl", "level": "high"})
@@ -72,8 +81,10 @@ async def test_rpc_set_thinking_level(tmp_path):
 
 async def test_rpc_list_models(tmp_path):
     sent = []
+
     async def send(payload):
         sent.append(payload)
+
     server = RpcServer(_runtime(tmp_path), send)
     await server.start()
     await server.handle({"type": "list_models", "id": "lm"})
@@ -85,8 +96,10 @@ async def test_rpc_list_models(tmp_path):
 
 async def test_rpc_get_active_tools(tmp_path):
     sent = []
+
     async def send(payload):
         sent.append(payload)
+
     server = RpcServer(_runtime(tmp_path), send)
     await server.start()
     await server.handle({"type": "get_active_tools", "id": "tools"})
@@ -99,8 +112,10 @@ async def test_rpc_get_active_tools(tmp_path):
 
 async def test_rpc_list_sessions_empty(tmp_path):
     sent = []
+
     async def send(payload):
         sent.append(payload)
+
     server = RpcServer(_runtime(tmp_path), send)
     await server.start()
     await server.handle({"type": "list_sessions", "id": "ls"})
@@ -111,8 +126,10 @@ async def test_rpc_list_sessions_empty(tmp_path):
 
 async def test_rpc_compact_when_idle(tmp_path):
     sent = []
+
     async def send(payload):
         sent.append(payload)
+
     server = RpcServer(_runtime(tmp_path), send)
     await server.start()
     await server.handle({"type": "compact", "id": "cmp", "target_tokens": 100})

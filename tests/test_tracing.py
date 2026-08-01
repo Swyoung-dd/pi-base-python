@@ -29,12 +29,15 @@ def test_tracer_records_events_when_enabled():
 
 def test_tracer_redacts_sensitive_fields():
     tracer = Tracer(TraceConfig(enabled=True))
-    tracer.trace("test", {
-        "api_key": "sk-secret",
-        "token": "abc123",
-        "normal_field": "ok",
-        "nested": {"password": "hidden", "data": "visible"},
-    })
+    tracer.trace(
+        "test",
+        {
+            "api_key": "sk-secret",
+            "token": "abc123",
+            "normal_field": "ok",
+            "nested": {"password": "hidden", "data": "visible"},
+        },
+    )
     event = tracer.events[0]
     assert event.data["api_key"] == "[REDACTED]"
     assert event.data["token"] == "[REDACTED]"
@@ -71,7 +74,9 @@ def test_tracer_llm_request_response():
     tracer = Tracer(TraceConfig(enabled=True))
     tracer.trace_llm_request("openai", "gpt-4", message_count=5, tool_count=3)
     tracer.trace_llm_response(
-        "openai", "gpt-4", "stop",
+        "openai",
+        "gpt-4",
+        "stop",
         usage={"input": 100, "output": 50, "total_tokens": 150},
     )
     assert len(tracer.events) == 2

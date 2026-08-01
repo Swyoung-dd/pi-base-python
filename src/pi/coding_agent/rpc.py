@@ -34,11 +34,13 @@ class RpcServer:
 
     async def start(self) -> None:
         await self.runtime.start()
-        await self._send({
-            "type": "ready",
-            "session_id": self.runtime.session_id,
-            "protocol_version": RPC_PROTOCOL_VERSION,
-        })
+        await self._send(
+            {
+                "type": "ready",
+                "session_id": self.runtime.session_id,
+                "protocol_version": RPC_PROTOCOL_VERSION,
+            }
+        )
 
     async def handle(self, request: dict[str, Any]) -> bool:
         """处理单个请求；返回是否继续读取后续请求。"""
@@ -110,15 +112,17 @@ class RpcServer:
                 result = await self.runtime.agent.compact(
                     target_tokens=target_tokens if isinstance(target_tokens, int) else None,
                 )
-                await self._send({
-                    "type": "response",
-                    "id": request_id,
-                    "compaction": {
-                        "original_tokens": result.original_tokens,
-                        "compacted_tokens": result.compacted_tokens,
-                        "dropped_messages": result.dropped_messages,
-                    },
-                })
+                await self._send(
+                    {
+                        "type": "response",
+                        "id": request_id,
+                        "compaction": {
+                            "original_tokens": result.original_tokens,
+                            "compacted_tokens": result.compacted_tokens,
+                            "dropped_messages": result.dropped_messages,
+                        },
+                    }
+                )
             except RuntimeError as exc:
                 await self._error(request_id, str(exc))
             return True
@@ -127,38 +131,45 @@ class RpcServer:
             models = list_all_models()
             if isinstance(provider, str):
                 models = [m for m in models if m.provider == provider]
-            await self._send({
-                "type": "response",
-                "id": request_id,
-                "models": [
-                    {"id": m.id, "name": m.name, "provider": m.provider, "api": m.api}
-                    for m in models
-                ],
-            })
+            await self._send(
+                {
+                    "type": "response",
+                    "id": request_id,
+                    "models": [
+                        {"id": m.id, "name": m.name, "provider": m.provider, "api": m.api}
+                        for m in models
+                    ],
+                }
+            )
             return True
         if request_type == "get_active_tools":
-            await self._send({
-                "type": "response",
-                "id": request_id,
-                "tools": [t.name for t in self.runtime.agent.state.tools],
-            })
+            await self._send(
+                {
+                    "type": "response",
+                    "id": request_id,
+                    "tools": [t.name for t in self.runtime.agent.state.tools],
+                }
+            )
             return True
         if request_type == "list_sessions":
             from pi.coding_agent.sessions import list_sessions
+
             sessions = await list_sessions(self.runtime.config.sessions_dir)
-            await self._send({
-                "type": "response",
-                "id": request_id,
-                "sessions": [
-                    {
-                        "session_id": s.session_id,
-                        "updated_at": s.updated_at.isoformat(),
-                        "message_count": s.message_count,
-                        "preview": s.preview,
-                    }
-                    for s in sessions
-                ],
-            })
+            await self._send(
+                {
+                    "type": "response",
+                    "id": request_id,
+                    "sessions": [
+                        {
+                            "session_id": s.session_id,
+                            "updated_at": s.updated_at.isoformat(),
+                            "message_count": s.message_count,
+                            "preview": s.preview,
+                        }
+                        for s in sessions
+                    ],
+                }
+            )
             return True
         if request_type == "session_tree":
             storage = self.runtime.agent.session_storage
@@ -166,21 +177,26 @@ class RpcServer:
                 await self._error(request_id, "no session storage configured")
                 return True
             from pi.coding_agent.sessions import format_session_tree
+
             entries = await storage.get_entries()
             leaf_id = await storage.get_leaf_id()
             tree = format_session_tree(entries, leaf_id)
-            await self._send({
-                "type": "response",
-                "id": request_id,
-                "tree": tree,
-            })
+            await self._send(
+                {
+                    "type": "response",
+                    "id": request_id,
+                    "tree": tree,
+                }
+            )
             return True
         if request_type == "protocol_version":
-            await self._send({
-                "type": "response",
-                "id": request_id,
-                "version": RPC_PROTOCOL_VERSION,
-            })
+            await self._send(
+                {
+                    "type": "response",
+                    "id": request_id,
+                    "version": RPC_PROTOCOL_VERSION,
+                }
+            )
             return True
         if request_type == "shutdown":
             if self._prompt_task is not None and not self._prompt_task.done():

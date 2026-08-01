@@ -77,6 +77,7 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
         from pathlib import Path
 
         from pi.agent.tools.execution_env import LocalExecutionEnv
+
         env = LocalExecutionEnv(Path.cwd())
         cwd = str(Path.cwd())
 

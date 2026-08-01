@@ -44,6 +44,7 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
         from pathlib import Path
 
         from pi.agent.tools.execution_env import LocalExecutionEnv
+
         env = LocalExecutionEnv(Path.cwd())
 
     try:
@@ -58,7 +59,10 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
 
     try:
         results = await env.grep(
-            pattern, path_arg, include=include, max_results=max_results,
+            pattern,
+            path_arg,
+            include=include,
+            max_results=max_results,
         )
 
         if not results:

@@ -28,10 +28,18 @@ class TraceConfig:
     # 输出文件路径；None 表示仅内存
     output_path: Path | None = None
     # 敏感字段名（部分匹配时脱敏）
-    sensitive_keys: set[str] = field(default_factory=lambda: {
-        "api_key", "apikey", "token", "secret", "password",
-        "credential", "authorization", "auth_token",
-    })
+    sensitive_keys: set[str] = field(
+        default_factory=lambda: {
+            "api_key",
+            "apikey",
+            "token",
+            "secret",
+            "password",
+            "credential",
+            "authorization",
+            "auth_token",
+        }
+    )
 
 
 @dataclass
@@ -68,7 +76,9 @@ class Tracer:
         if self._config.enabled and self._config.output_path:
             self._config.output_path.parent.mkdir(parents=True, exist_ok=True)
             self._file = open(  # noqa: SIM115
-                self._config.output_path, "a", encoding="utf-8",
+                self._config.output_path,
+                "a",
+                encoding="utf-8",
             )
 
     @property
@@ -150,12 +160,16 @@ class Tracer:
         duration_ms: float | None = None,
     ) -> None:
         """记录 LLM 请求，不记录提示内容。"""
-        self.trace("llm_request", {
-            "provider": provider,
-            "model": model,
-            "message_count": message_count,
-            "tool_count": tool_count,
-        }, duration_ms=duration_ms)
+        self.trace(
+            "llm_request",
+            {
+                "provider": provider,
+                "model": model,
+                "message_count": message_count,
+                "tool_count": tool_count,
+            },
+            duration_ms=duration_ms,
+        )
 
     def trace_llm_response(
         self,
@@ -183,11 +197,15 @@ class Tracer:
         duration_ms: float | None = None,
     ) -> None:
         """记录上下文压缩。"""
-        self.trace("compaction", {
-            "original_tokens": original_tokens,
-            "compacted_tokens": compacted_tokens,
-            "dropped_messages": dropped_messages,
-        }, duration_ms=duration_ms)
+        self.trace(
+            "compaction",
+            {
+                "original_tokens": original_tokens,
+                "compacted_tokens": compacted_tokens,
+                "dropped_messages": dropped_messages,
+            },
+            duration_ms=duration_ms,
+        )
 
     def trace_session_event(self, event_type: str, session_id: str | None = None) -> None:
         """记录会话生命周期事件。"""

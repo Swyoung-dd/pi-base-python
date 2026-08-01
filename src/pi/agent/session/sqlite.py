@@ -65,19 +65,21 @@ class SqliteStorage(SessionStorage):
                     "(id, parent_id, type, message, data, timestamp) "
                     "VALUES (?, ?, ?, ?, ?, ?)"
                 ),
-                (d["id"], d.get("parent_id"), d.get("type", "message"),
-                 json.dumps(d.get("message"), ensure_ascii=False) if d.get("message") else None,
-                 json.dumps(d.get("data"), ensure_ascii=False) if d.get("data") else None,
-                 d.get("timestamp", "")),
+                (
+                    d["id"],
+                    d.get("parent_id"),
+                    d.get("type", "message"),
+                    json.dumps(d.get("message"), ensure_ascii=False) if d.get("message") else None,
+                    json.dumps(d.get("data"), ensure_ascii=False) if d.get("data") else None,
+                    d.get("timestamp", ""),
+                ),
             )
             self._conn.commit()
         return entry.id
 
     async def get(self, entry_id: str) -> SessionEntry | None:
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM entries WHERE id = ?", (entry_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM entries WHERE id = ?", (entry_id,)).fetchone()
         if row is None:
             return None
         return self._row_to_entry(row)

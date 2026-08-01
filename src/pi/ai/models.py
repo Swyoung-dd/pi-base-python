@@ -90,15 +90,17 @@ async def refresh_models(provider_id: str | None = None) -> list[Model]:
                         continue
                     existing = get_model(model_id, pid)
                     if existing is None:
-                        register_model(Model(
-                            id=model_id,
-                            name=model_id,
-                            api="openai-chat",
-                            provider=pid,
-                            base_url=base_url,
-                        ))
+                        register_model(
+                            Model(
+                                id=model_id,
+                                name=model_id,
+                                api="openai-chat",
+                                provider=pid,
+                                base_url=base_url,
+                            )
+                        )
         except Exception:
-                pass
+            pass
     all_models = list_models()
     if provider_id:
         return [m for m in all_models if m.provider == provider_id]
@@ -109,6 +111,7 @@ def list_providers_safe() -> list[str]:
     """Return registered provider IDs, handling import errors."""
     try:
         from pi.ai.providers.registry import list_providers
+
         return list_providers()
     except Exception:
         return []
