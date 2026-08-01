@@ -98,8 +98,11 @@ async def refresh_models(provider_id: str | None = None) -> list[Model]:
                             base_url=base_url,
                         ))
         except Exception:
-            pass
-    return list_models()
+                pass
+    all_models = list_models()
+    if provider_id:
+        return [m for m in all_models if m.provider == provider_id]
+    return all_models
 
 
 def list_providers_safe() -> list[str]:

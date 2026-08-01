@@ -127,6 +127,11 @@ class ExtensionContext:
         """注册上下文变换器，在发送给模型前修改 system_prompt 或 messages。"""
         self._context_transformers.append((self._loading_source, transformer))
 
+    @property
+    def context_transformers(self) -> list[Any]:
+        """返回已注册的上下文变换器列表（不含来源信息）。"""
+        return [transformer for _source, transformer in self._context_transformers]
+
     async def transform_context(
         self,
         system_prompt: str,
