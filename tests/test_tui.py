@@ -1,6 +1,7 @@
 """交互终端状态与命令测试。"""
 
 import io
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -385,6 +386,8 @@ def test_input_status_shows_git_and_fits_terminal_width(tmp_path):
         session_id="test-session",
         history_file=tmp_path / "history",
     )
+    display_cwd = Path("workspace")
+    session._cwd = display_cwd
     session._git_status = ("main", 2)
     session._console = Console(width=160)
 
@@ -392,7 +395,7 @@ def test_input_status_shows_git_and_fits_terminal_width(tmp_path):
     header = fragment_list_to_text(session._input_prompt()).splitlines()[0]
 
     assert "○ main +2" in status
-    assert str(tmp_path) in status
+    assert str(display_cwd) in status
     assert fragment_list_width([("", header)]) == 160
 
 
