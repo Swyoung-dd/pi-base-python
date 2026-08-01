@@ -52,3 +52,60 @@ def get_model(model_id: str, provider: str | None = None) -> Model | None:
 def models_by_provider(provider: str) -> list[Model]:
     """返回指定提供商的所有模型。"""
     return [model for model in list_models() if model.provider == provider]
+
+
+async def refresh_models(provider_id: str | None = None) -> list[Model]:
+    """Refresh models from provider API (e.g., OpenAI /models endpoint).
+
+    For providers that support model listing, fetch and register new models.
+    Returns the list of refreshed models. Failures are non-fatal.
+    """
+    import httpx
+
+    from pi.ai.auth import get_api_key
+    from pi.ai.providers.registry import get_provider
+
+    targets = [provider_id] if provider_id else list_providers_safe()
+    for pid in targets:
+        provider = get_provider(pid)
+        if provider is None:
+            continue
+        api_key = get_api_key(pid)
+        if not api_key:
+            continue
+        base_url = "https://api.openai.com/v1"
+        for m in list_models():
+            if m.provider == pid and m.base_url:
+                base_url = m.base_url
+                break
+        try:
+            headers = {"Authorization": f"Bearer {api_key}"}
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(f"{base_url.rstrip('/')}/models", headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+                for item in data.get("data", []):
+                    model_id = item.get("id")
+                    if not model_id:
+                        continue
+                    existing = get_model(model_id, pid)
+                    if existing is None:
+                        register_model(Model(
+                            id=model_id,
+                            name=model_id,
+                            api="openai-chat",
+                            provider=pid,
+                            base_url=base_url,
+                        ))
+        except Exception:
+            pass
+    return list_models()
+
+
+def list_providers_safe() -> list[str]:
+    """Return registered provider IDs, handling import errors."""
+    try:
+        from pi.ai.providers.registry import list_providers
+        return list_providers()
+    except Exception:
+        return []

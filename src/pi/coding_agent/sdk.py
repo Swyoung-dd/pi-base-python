@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pi.agent.agent import Agent, AgentOptions
 from pi.agent.session import JsonlStorage, SessionStorage
-from pi.agent.tools import ToolContext
+from pi.agent.tools import LocalExecutionEnv, ToolContext
 from pi.agent.types import AgentEvent, AgentMessage
 from pi.ai.models import get_model
 from pi.ai.types import Model, ModelThinkingLevel
@@ -18,6 +18,7 @@ from pi.coding_agent.runtime import build_runtime_resources, make_stream_fn
 from pi.coding_agent.sessions import new_session_id, session_path
 from pi.coding_agent.skills import Skill
 from pi.coding_agent.themes import Theme
+from pi.coding_agent.tracing import Tracer, get_tracer
 
 
 @dataclass
@@ -33,6 +34,7 @@ class CodingAgent:
     theme: Theme
     session_id: str | None = None
     extension_failures: list[ExtensionFailure] = field(default_factory=list)
+    tracer: Tracer = field(default_factory=get_tracer)
     _started: bool = field(default=False, init=False, repr=False)
 
     async def start(self) -> None:
@@ -40,6 +42,7 @@ class CodingAgent:
         if self._started:
             return
         await self.agent.restore()
+        self.tracer.trace_session_event("session_start", self.session_id)
         self.extension_failures.extend(
             await self.extensions.emit(
                 "session_start",
@@ -69,6 +72,7 @@ class CodingAgent:
             self.agent.abort()
             await self.agent.wait_for_idle()
         if self._started:
+            self.tracer.trace_session_event("session_shutdown", self.session_id)
             self.extension_failures.extend(
                 await self.extensions.emit(
                     "session_shutdown",
@@ -79,6 +83,27 @@ class CodingAgent:
             self._started = False
 
     async def _on_agent_event(self, event: AgentEvent) -> None:
+        if event.type == "tool_execution_end" and event.result:
+            self.tracer.trace_tool_call(
+                tool_name=event.tool_name,
+                tool_call_id=event.tool_call_id,
+                is_error=event.result.is_error,
+            )
+        elif event.type == "message_end":
+            model = event.message.model
+            provider = event.message.provider
+            self.tracer.trace_llm_response(
+                provider=provider,
+                model=model,
+                stop_reason=event.message.stop_reason,
+                usage=event.message.usage.model_dump(mode="json") if event.message.usage else None,
+            )
+        elif event.type == "context_compacted":
+            self.tracer.trace_compaction(
+                original_tokens=event.original_tokens,
+                compacted_tokens=event.compacted_tokens,
+                dropped_messages=event.dropped_messages,
+            )
         self.extension_failures.extend(await self.extensions.emit("agent_event", event, self.agent))
 
 
@@ -129,7 +154,12 @@ async def create_coding_agent(
             stream_fn=make_stream_fn(),
             session_id=resolved_session_id,
             session_storage=storage,
-            tool_context=ToolContext(cwd=resolved_cwd),
+            tool_context=ToolContext(
+                cwd=resolved_cwd,
+                env=LocalExecutionEnv(resolved_cwd),
+            ),
+            before_tool_call=_make_before_tool_hook(extensions),
+            after_tool_call=_make_after_tool_hook(extensions),
             temperature=resolved_config.temperature,
             max_tokens=resolved_config.max_tokens,
             thinking_level=ModelThinkingLevel(resolved_config.thinking_level),
@@ -145,5 +175,24 @@ async def create_coding_agent(
         theme=theme,
         session_id=resolved_session_id,
     )
+    agent._tool_context.state["extensions"] = extensions
     agent.subscribe(runtime._on_agent_event)
     return runtime
+
+
+def _make_before_tool_hook(extensions):
+    """Create a before_tool_call hook that emits extension events."""
+
+    async def hook(call, tool):
+        await extensions.emit("before_tool", {"call": call, "tool": tool})
+
+    return hook
+
+
+def _make_after_tool_hook(extensions):
+    """Create an after_tool_call hook that emits extension events."""
+
+    async def hook(call, tool, result):
+        await extensions.emit("after_tool", {"call": call, "tool": tool, "result": result})
+
+    return hook

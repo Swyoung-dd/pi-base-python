@@ -69,6 +69,21 @@ from pi.ai.types import (
 CompactFn = Callable[[list[AgentMessage], int, int], Awaitable[CompactionResult]]
 
 
+def _get_extensions(tool_context: Any):
+    """Extract ExtensionContext from tool_context.state if available."""
+    if tool_context is None:
+        return None
+    state = getattr(tool_context, "state", None)
+    if not isinstance(state, dict):
+        return None
+    ext = state.get("extensions")
+    if ext is None:
+        return None
+    if hasattr(ext, "emit") and hasattr(ext, "transform_context"):
+        return ext
+    return None
+
+
 def _validate_tool_arguments(
     arguments: dict[str, Any],
     parameters: dict[str, Any],
@@ -290,6 +305,10 @@ async def run_agent_loop(
                 context.tools,
             )
             if estimated_tokens > options.context_token_limit:
+                # P1-3: Emit before_compaction extension event
+                ext_ctx = _get_extensions(tool_context)
+                if ext_ctx is not None:
+                    await ext_ctx.emit("before_compaction", {"messages": all_messages})
                 target_tokens = options.compact_to_tokens or (options.context_token_limit * 3 // 4)
                 compacted = (
                     await compact_fn(all_messages, target_tokens, estimated_tokens)
@@ -312,6 +331,20 @@ async def run_agent_loop(
             messages=llm_messages,
             tools=ai_tools,
         )
+
+        # P1-3: Apply extension context transforms and emit before_request
+        ext_ctx = _get_extensions(tool_context)
+        if ext_ctx is not None:
+            system_prompt, llm_messages = await ext_ctx.transform_context(
+                context.system_prompt,
+                llm_messages,
+            )
+            llm_context = Context(
+                system_prompt=system_prompt,
+                messages=llm_messages,
+                tools=ai_tools,
+            )
+            await ext_ctx.emit("before_request", {"context": llm_context})
 
         stream: EventStream = await stream_fn(model, llm_context, options)
 
@@ -389,6 +422,11 @@ async def run_agent_loop(
         await sink(MessageEndEvent(message=agent_msg))
         all_messages.append(agent_msg)
         new_messages.append(agent_msg)
+
+        # P1-3: Emit after_response extension event
+        ext_ctx = _get_extensions(tool_context)
+        if ext_ctx is not None:
+            await ext_ctx.emit("after_response", {"message": agent_msg})
 
         if agent_msg.stop_reason in ("error", "aborted"):
             await sink(TurnEndEvent(message=agent_msg, tool_results=[]))

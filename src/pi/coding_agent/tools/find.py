@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import fnmatch
-from pathlib import Path
-
 from pi.agent.tools.base import ToolContext, truncate_output
 from pi.agent.types import AgentTool, AgentToolCall, AgentToolResult
 from pi.ai.types import TextContent
@@ -34,10 +31,16 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
     pattern = call.arguments.get("pattern", "*")
     max_results = call.arguments.get("max_results", 100)
 
-    cwd = ctx.cwd if ctx else Path.cwd()
-    search_dir = (cwd / path_arg).resolve()
+    if ctx is not None:
+        env = ctx.ensure_env()
+    else:
+        from pathlib import Path
+
+        from pi.agent.tools.execution_env import LocalExecutionEnv
+        env = LocalExecutionEnv(Path.cwd())
 
     try:
+        search_dir = env.resolve(path_arg)
         if not search_dir.exists():
             return AgentToolResult(
                 tool_call_id=call.id,
@@ -46,13 +49,7 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
                 is_error=True,
             )
 
-        results = []
-        for entry in sorted(search_dir.rglob("*")):
-            if fnmatch.fnmatch(entry.name, pattern):
-                rel = entry.relative_to(cwd)
-                results.append(str(rel))
-                if len(results) >= max_results:
-                    break
+        results = await env.find(path_arg, pattern, max_results=max_results)
 
         if not results:
             result_text = "No files found"

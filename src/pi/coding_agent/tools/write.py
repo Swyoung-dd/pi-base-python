@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from pi.agent.tools.base import ToolContext
 from pi.agent.types import AgentTool, AgentToolCall, AgentToolResult
 from pi.ai.types import TextContent
@@ -28,12 +26,16 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
     path_arg = call.arguments.get("path", "")
     content = call.arguments.get("content", "")
 
-    cwd = ctx.cwd if ctx else Path.cwd()
-    file_path = (cwd / path_arg).resolve()
+    if ctx is not None:
+        env = ctx.ensure_env()
+    else:
+        from pathlib import Path
+
+        from pi.agent.tools.execution_env import LocalExecutionEnv
+        env = LocalExecutionEnv(Path.cwd())
 
     try:
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(content, encoding="utf-8")
+        await env.write(path_arg, content)
         line_count = content.count("\n") + 1 if content else 0
         return AgentToolResult(
             tool_call_id=call.id,

@@ -165,6 +165,45 @@ class ModelCost(BaseModel):
     cache_write: float = 0.0
 
 
+class ModelCompat(BaseModel):
+    """模型兼容性描述，用于处理 provider 间的能力差异。
+
+    涵盖 developer/system role、thinking 格式、strict tools、
+    cache、session affinity 等 provider 特定行为。
+    """
+
+    # developer/system 角色名称差异
+    developer_role: str = "system"
+    # 是否支持 thinking
+    supports_thinking: bool = False
+    # thinking 格式: interleaved（内联）/ separate（独立块）
+    thinking_format: str = "interleaved"
+    # 是否支持 strict tool schema
+    supports_strict_tools: bool = False
+    # 是否支持 prompt cache
+    supports_cache: bool = False
+    # cache 类型: prompt / ephemeral
+    cache_type: str = "ephemeral"
+    # 是否支持 session affinity（如 OpenAI 的 previous_response_id）
+    supports_session_affinity: bool = False
+    # session affinity 字段名
+    session_affinity_field: str = "previous_response_id"
+    # ModelThinkingLevel 到 provider 特定值的映射
+    thinking_level_map: dict[str, str] = Field(default_factory=dict)
+    # 是否支持图片输入
+    supports_images: bool = False
+    # 是否支持流式 thinking
+    supports_streaming_thinking: bool = False
+    # 是否需要 tool_choice 显式设置
+    requires_tool_choice: bool = False
+    # 响应中 usage 是否包含 reasoning token
+    reports_reasoning_tokens: bool = False
+
+    def resolve_thinking_level(self, level: str) -> str:
+        """将统一 thinking level 映射为 provider 特定值。"""
+        return self.thinking_level_map.get(level, level)
+
+
 class Model(BaseModel):
     id: str
     name: str
@@ -177,6 +216,7 @@ class Model(BaseModel):
     context_window: int = 0
     max_tokens: int = 0
     headers: dict[str, str] | None = None
+    compat: ModelCompat = Field(default_factory=ModelCompat)
 
 
 # ---- 上下文（传递给提供商） ----

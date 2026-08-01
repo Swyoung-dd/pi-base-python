@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from pi.agent.tools.base import ToolContext, truncate_output
 from pi.agent.types import AgentTool, AgentToolCall, AgentToolResult
@@ -39,11 +38,16 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
     include = call.arguments.get("include")
     max_results = call.arguments.get("max_results", 50)
 
-    cwd = ctx.cwd if ctx else Path.cwd()
-    search_path = (cwd / path_arg).resolve()
+    if ctx is not None:
+        env = ctx.ensure_env()
+    else:
+        from pathlib import Path
+
+        from pi.agent.tools.execution_env import LocalExecutionEnv
+        env = LocalExecutionEnv(Path.cwd())
 
     try:
-        regex = re.compile(pattern)
+        re.compile(pattern)
     except re.error as exc:
         return AgentToolResult(
             tool_call_id=call.id,
@@ -53,32 +57,9 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
         )
 
     try:
-        results = []
-
-        if search_path.is_file():
-            files = [search_path]
-        else:
-            files = sorted(search_path.rglob("*"))
-            files = [f for f in files if f.is_file()]
-            if include:
-                import fnmatch
-
-                files = [f for f in files if fnmatch.fnmatch(f.name, include)]
-
-        for file_path in files:
-            try:
-                text = file_path.read_text(encoding="utf-8", errors="replace")
-            except Exception:
-                continue
-
-            for line_num, line in enumerate(text.split("\n"), 1):
-                if regex.search(line):
-                    rel = file_path.relative_to(cwd)
-                    results.append(f"{rel}:{line_num}: {line.strip()}")
-                    if len(results) >= max_results:
-                        break
-            if len(results) >= max_results:
-                break
+        results = await env.grep(
+            pattern, path_arg, include=include, max_results=max_results,
+        )
 
         if not results:
             result_text = "No matches found"

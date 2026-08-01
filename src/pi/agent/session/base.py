@@ -172,10 +172,6 @@ class SessionStorage(abc.ABC):
         await self.set_leaf_id(entry_id)
         return entry_id
 
-        entry_id = await self.append(entry)
-        await self.set_leaf_id(entry_id)
-        return entry_id
-
     async def append_thinking_level_change(self, level: str) -> str:
         """记录思考级别变更。"""
         leaf = await self.get_leaf_id()

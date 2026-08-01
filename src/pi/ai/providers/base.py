@@ -13,7 +13,7 @@ import abc
 from typing import Any
 
 from pi.ai.streaming import EventStream
-from pi.ai.types import Context, Model, StreamOptions
+from pi.ai.types import Context, Model, ModelThinkingLevel, StreamOptions
 
 
 class BaseProvider(abc.ABC):
@@ -83,3 +83,11 @@ class BaseProvider(abc.ABC):
         if not context.tools:
             return None
         raise NotImplementedError
+
+    def map_thinking_level(self, level: ModelThinkingLevel) -> Any:
+        """Map unified thinking level to provider-specific format.
+
+        Override per provider to return the format the provider expects
+        (e.g., a string for OpenAI reasoning_effort, or budget tokens for Anthropic).
+        """
+        return level

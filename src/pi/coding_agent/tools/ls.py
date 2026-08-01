@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from pi.agent.tools.base import ToolContext, truncate_output
 from pi.agent.types import AgentTool, AgentToolCall, AgentToolResult
 from pi.ai.types import TextContent
@@ -28,18 +26,24 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
     path_arg = call.arguments.get("path", ".")
     show_all = call.arguments.get("all", False)
 
-    cwd = ctx.cwd if ctx else Path.cwd()
-    dir_path = (cwd / path_arg).resolve()
+    if ctx is not None:
+        env = ctx.ensure_env()
+    else:
+        from pathlib import Path
+
+        from pi.agent.tools.execution_env import LocalExecutionEnv
+        env = LocalExecutionEnv(Path.cwd())
 
     try:
-        if not dir_path.exists():
+        file_path = env.resolve(path_arg)
+        if not file_path.exists():
             return AgentToolResult(
                 tool_call_id=call.id,
                 tool_name="ls",
                 content=[TextContent(text=f"Directory not found: {path_arg}")],
                 is_error=True,
             )
-        if not dir_path.is_dir():
+        if not file_path.is_dir():
             return AgentToolResult(
                 tool_call_id=call.id,
                 tool_name="ls",
@@ -47,12 +51,10 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
                 is_error=True,
             )
 
-        entries = sorted(dir_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+        entries = await env.list_dir(path_arg, show_all=show_all)
         lines = []
         for entry in entries:
-            if not show_all and entry.name.startswith("."):
-                continue
-            marker = "/" if entry.is_dir() else ""
+            marker = "/" if entry.is_dir else ""
             lines.append(f"{entry.name}{marker}")
 
         result = "\n".join(lines) if lines else "(empty)"

@@ -41,7 +41,11 @@ def _register_builtins() -> None:
     """首次导入时注册内置提供商。"""
     from pi.ai.providers.anthropic import AnthropicProvider
     from pi.ai.providers.deepseek import DeepSeekProvider
+    from pi.ai.providers.google import GoogleProvider
+    from pi.ai.providers.kimi import KimiProvider
     from pi.ai.providers.openai import OpenAIProvider
+    from pi.ai.providers.qwen import QwenProvider
+    from pi.ai.providers.zai import ZAIProvider
 
     if "openai" not in _providers:
         register_provider(OpenAIProvider())
@@ -49,6 +53,14 @@ def _register_builtins() -> None:
         register_provider(AnthropicProvider())
     if "deepseek" not in _providers:
         register_provider(DeepSeekProvider())
+    if "google" not in _providers:
+        register_provider(GoogleProvider())
+    if "qwen" not in _providers:
+        register_provider(QwenProvider())
+    if "zai" not in _providers:
+        register_provider(ZAIProvider())
+    if "kimi" not in _providers:
+        register_provider(KimiProvider())
     for provider_id in ("groq", "mistral", "openrouter", "xai"):
         if provider_id not in _providers:
             register_openai_compatible(provider_id)

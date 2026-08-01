@@ -12,11 +12,14 @@ from pydantic import TypeAdapter
 
 from pi.agent.types import AgentEvent, AgentMessage, create_user_message
 from pi.ai.models import get_model
+from pi.ai.models import list_models as list_all_models
+from pi.ai.types import ModelThinkingLevel
 from pi.coding_agent.output import event_to_dict
 from pi.coding_agent.sdk import CodingAgent
 
 _MESSAGES_ADAPTER = TypeAdapter(list[AgentMessage])
 RpcSend = Callable[[dict[str, Any]], Awaitable[None]]
+RPC_PROTOCOL_VERSION = 2
 
 
 class RpcServer:
@@ -31,7 +34,11 @@ class RpcServer:
 
     async def start(self) -> None:
         await self.runtime.start()
-        await self._send({"type": "ready", "session_id": self.runtime.session_id})
+        await self._send({
+            "type": "ready",
+            "session_id": self.runtime.session_id,
+            "protocol_version": RPC_PROTOCOL_VERSION,
+        })
 
     async def handle(self, request: dict[str, Any]) -> bool:
         """处理单个请求；返回是否继续读取后续请求。"""
@@ -86,6 +93,94 @@ class RpcServer:
             else:
                 await self.runtime.set_model(model)
                 await self._send({"type": "response", "id": request_id, "ok": True})
+            return True
+        if request_type == "set_thinking_level":
+            level_str = request.get("level")
+            try:
+                level = ModelThinkingLevel(level_str) if level_str else ModelThinkingLevel.OFF
+            except ValueError:
+                await self._error(request_id, f"invalid thinking level: {level_str}")
+                return True
+            self.runtime.agent.set_thinking_level(level)
+            await self._send({"type": "response", "id": request_id, "ok": True})
+            return True
+        if request_type == "compact":
+            target_tokens = request.get("target_tokens")
+            try:
+                result = await self.runtime.agent.compact(
+                    target_tokens=target_tokens if isinstance(target_tokens, int) else None,
+                )
+                await self._send({
+                    "type": "response",
+                    "id": request_id,
+                    "compaction": {
+                        "original_tokens": result.original_tokens,
+                        "compacted_tokens": result.compacted_tokens,
+                        "dropped_messages": result.dropped_messages,
+                    },
+                })
+            except RuntimeError as exc:
+                await self._error(request_id, str(exc))
+            return True
+        if request_type == "list_models":
+            provider = request.get("provider")
+            models = list_all_models()
+            if isinstance(provider, str):
+                models = [m for m in models if m.provider == provider]
+            await self._send({
+                "type": "response",
+                "id": request_id,
+                "models": [
+                    {"id": m.id, "name": m.name, "provider": m.provider, "api": m.api}
+                    for m in models
+                ],
+            })
+            return True
+        if request_type == "get_active_tools":
+            await self._send({
+                "type": "response",
+                "id": request_id,
+                "tools": [t.name for t in self.runtime.agent.state.tools],
+            })
+            return True
+        if request_type == "list_sessions":
+            from pi.coding_agent.sessions import list_sessions
+            sessions = await list_sessions(self.runtime.config.sessions_dir)
+            await self._send({
+                "type": "response",
+                "id": request_id,
+                "sessions": [
+                    {
+                        "session_id": s.session_id,
+                        "updated_at": s.updated_at.isoformat(),
+                        "message_count": s.message_count,
+                        "preview": s.preview,
+                    }
+                    for s in sessions
+                ],
+            })
+            return True
+        if request_type == "session_tree":
+            storage = self.runtime.agent.session_storage
+            if storage is None:
+                await self._error(request_id, "no session storage configured")
+                return True
+            from pi.coding_agent.sessions import format_session_tree
+            entries = await storage.get_entries()
+            leaf_id = await storage.get_leaf_id()
+            tree = format_session_tree(entries, leaf_id)
+            await self._send({
+                "type": "response",
+                "id": request_id,
+                "tree": tree,
+            })
+            return True
+        if request_type == "protocol_version":
+            await self._send({
+                "type": "response",
+                "id": request_id,
+                "version": RPC_PROTOCOL_VERSION,
+            })
             return True
         if request_type == "shutdown":
             if self._prompt_task is not None and not self._prompt_task.done():

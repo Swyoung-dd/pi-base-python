@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from pi.agent.tools.base import ToolContext
 from pi.agent.types import AgentTool, AgentToolCall, AgentToolResult
 from pi.ai.types import TextContent
@@ -33,10 +31,16 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
     old_text = call.arguments.get("old_text", "")
     new_text = call.arguments.get("new_text", "")
 
-    cwd = ctx.cwd if ctx else Path.cwd()
-    file_path = (cwd / path_arg).resolve()
+    if ctx is not None:
+        env = ctx.ensure_env()
+    else:
+        from pathlib import Path
+
+        from pi.agent.tools.execution_env import LocalExecutionEnv
+        env = LocalExecutionEnv(Path.cwd())
 
     try:
+        file_path = env.resolve(path_arg)
         if not file_path.exists():
             return AgentToolResult(
                 tool_call_id=call.id,
@@ -45,9 +49,7 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
                 is_error=True,
             )
 
-        content = file_path.read_text(encoding="utf-8", errors="replace")
-
-        count = content.count(old_text)
+        count = await env.edit(path_arg, old_text, new_text)
         if count == 0:
             return AgentToolResult(
                 tool_call_id=call.id,
@@ -69,9 +71,6 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
                 ],
                 is_error=True,
             )
-
-        new_content = content.replace(old_text, new_text, 1)
-        file_path.write_text(new_content, encoding="utf-8")
 
         return AgentToolResult(
             tool_call_id=call.id,

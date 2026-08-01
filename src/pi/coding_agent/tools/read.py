@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from pi.agent.tools.base import ToolContext, truncate_output
 from pi.agent.types import AgentTool, AgentToolCall, AgentToolResult
 from pi.ai.types import TextContent
@@ -33,10 +31,16 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
     offset = call.arguments.get("offset", 1)
     limit = call.arguments.get("limit", 2000)
 
-    cwd = ctx.cwd if ctx else Path.cwd()
-    file_path = (cwd / path_arg).resolve()
+    if ctx is not None:
+        env = ctx.ensure_env()
+    else:
+        from pathlib import Path
+
+        from pi.agent.tools.execution_env import LocalExecutionEnv
+        env = LocalExecutionEnv(Path.cwd())
 
     try:
+        file_path = env.resolve(path_arg)
         if not file_path.exists():
             return AgentToolResult(
                 tool_call_id=call.id,
@@ -52,14 +56,13 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
                 is_error=True,
             )
 
-        text = file_path.read_text(encoding="utf-8", errors="replace")
+        text = await env.read(path_arg)
         lines = text.split("\n")
 
         start = max(0, offset - 1)
         end = min(len(lines), start + limit)
         selected = lines[start:end]
 
-        # 添加行号
         numbered = []
         for i, line in enumerate(selected, start=start + 1):
             numbered.append(f"{i:6d}\t{line}")

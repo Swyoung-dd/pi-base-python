@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 
 from pi.ai.oauth import CredentialStore, resolve_oauth_access_token, resolve_stored_api_key
 from pi.ai.oauth_xai import register_xai_oauth
@@ -19,6 +20,9 @@ _ENV_KEY_MAP: dict[str, list[str]] = {
     "xai": ["XAI_API_KEY"],
     "groq": ["GROQ_API_KEY"],
     "openrouter": ["OPENROUTER_API_KEY"],
+    "qwen": ["DASHSCOPE_API_KEY", "QWEN_API_KEY"],
+    "zai": ["ZAI_API_KEY"],
+    "kimi": ["MOONSHOT_API_KEY", "KIMI_API_KEY"],
 }
 
 
@@ -50,3 +54,32 @@ async def get_provider_token(
         return stored_api_key
     oauth_token = await resolve_oauth_access_token(provider, store)
     return oauth_token or get_api_key(provider)
+
+
+@dataclass
+class AuthDiagnostic:
+    """API key source diagnostic for a provider."""
+
+    provider: str
+    source: str  # "env" | "stored" | "oauth" | "none"
+    key_name: str | None = None
+    available: bool = False
+
+
+def diagnose_auth(provider: str, store: CredentialStore | None = None) -> AuthDiagnostic:
+    """Diagnose where the API key for a provider comes from."""
+    env_keys = _ENV_KEY_MAP.get(provider, [])
+    for key in env_keys:
+        val = os.environ.get(key)
+        if val:
+            return AuthDiagnostic(provider=provider, source="env", key_name=key, available=True)
+    generic = os.environ.get(f"PIY_API_KEY_{provider.upper()}")
+    if generic:
+        key_name = f"PIY_API_KEY_{provider.upper()}"
+        return AuthDiagnostic(
+            provider=provider,
+            source="env",
+            key_name=key_name,
+            available=True,
+        )
+    return AuthDiagnostic(provider=provider, source="none", available=False)
