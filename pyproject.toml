@@ -36,6 +36,7 @@ dev = [
 piY = "pi.coding_agent.cli:main"
 
 [project.urls]
+Homepage = "https://swyoung-dd.github.io/piy-dev/"
 Repository = "https://github.com/Swyoung-dd/pi-base-python"
 
 [tool.hatch.build.targets.wheel]

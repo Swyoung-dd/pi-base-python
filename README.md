@@ -4,6 +4,8 @@
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
+[项目网站](https://swyoung-dd.github.io/piy-dev/)
+
 piY 是一个用 Python 构建的终端 AI 编码 agent。它将多种 LLM provider、流式响应、
 工具调用、持久会话和上下文管理整合为统一运行时，并同时提供交互式终端、单次命令、
 Python SDK 和 JSONL RPC 接口。
