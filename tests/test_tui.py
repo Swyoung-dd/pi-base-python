@@ -209,9 +209,7 @@ async def test_clear_starts_recoverable_session_and_clears_screen(tmp_path):
     assert session._agent.state.messages == []
     assert (sessions_dir / "old-session.jsonl").exists()
     session._console.clear.assert_called_once_with()
-    assert session._console.print.call_args.args[0].startswith(
-        "Context cleared. New session: "
-    )
+    assert session._console.print.call_args.args[0].startswith("Context cleared. New session: ")
     session._emit_extension_event.assert_awaited_once_with(
         "session_switch",
         {"reason": "clear", "session_id": session._session_id},
