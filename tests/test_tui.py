@@ -2,7 +2,7 @@
 
 import io
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from prompt_toolkit.formatted_text import fragment_list_to_text, to_formatted_text
@@ -178,6 +178,87 @@ async def test_new_session_records_current_model(tmp_path):
     assert await session._session_storage.get_model_selection() == (
         model.provider,
         model.id,
+    )
+
+
+async def test_clear_starts_recoverable_session_and_clears_screen(tmp_path):
+    model = list_models()[0]
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    old_storage = JsonlStorage(sessions_dir / "old-session.jsonl")
+    await old_storage.append_message(create_user_message("keep this history"))
+    session = InteractiveSession(
+        model=model,
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        session_id="old-session",
+        session_storage=old_storage,
+        sessions_dir=sessions_dir,
+        history_file=tmp_path / "history",
+    )
+    await session._agent.restore()
+    session._console.clear = Mock()
+    session._console.print = Mock()
+    session._emit_extension_event = AsyncMock()
+
+    handled, should_exit = await session._handle_command("/clear")
+
+    assert handled and not should_exit
+    assert session._session_id != "old-session"
+    assert session._agent.state.messages == []
+    assert (sessions_dir / "old-session.jsonl").exists()
+    session._console.clear.assert_called_once_with()
+    assert session._console.print.call_args.args[0].startswith(
+        "Context cleared. New session: "
+    )
+    session._emit_extension_event.assert_awaited_once_with(
+        "session_switch",
+        {"reason": "clear", "session_id": session._session_id},
+    )
+
+
+async def test_clear_screen_preserves_current_context(tmp_path):
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        session_id="current-session",
+        history_file=tmp_path / "history",
+    )
+    message = create_user_message("keep this context")
+    session._agent.state.messages.append(message)
+    session._console.clear = Mock()
+
+    handled, should_exit = await session._handle_command("/clear-screen")
+
+    assert handled and not should_exit
+    assert session._session_id == "current-session"
+    assert session._agent.state.messages == [message]
+    session._console.clear.assert_called_once_with()
+
+
+async def test_clear_does_not_interrupt_active_request(tmp_path):
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        sessions_dir=tmp_path / "sessions",
+        history_file=tmp_path / "history",
+    )
+    session._agent._idle_event.clear()
+    session._console.clear = Mock()
+    session._console.print = Mock()
+
+    handled, should_exit = await session._handle_command("/clear")
+
+    assert handled and not should_exit
+    session._console.clear.assert_not_called()
+    session._console.print.assert_called_once_with(
+        "Agent is busy. Wait for idle before clearing context.",
+        style=session._theme.warning,
     )
 
 

@@ -26,6 +26,7 @@ BUILTIN_COMMANDS = frozenset(
     {
         "branch",
         "clear",
+        "clear-screen",
         "compact",
         "exit",
         "follow-up",
@@ -86,11 +87,12 @@ class CommandDispatcher:
 
         if command in ("exit", "quit", "/q", "/quit", "/exit"):
             return True, True
-        if command == "/clear":
+        if command == "/clear-screen":
             self._session._console.clear()
             return True, False
 
         handlers = {
+            "/clear": self._clear,
             "/help": self._help,
             "/thinking": self._thinking,
             "/compact": self._compact,
@@ -125,15 +127,45 @@ class CommandDispatcher:
 
     async def _help(self, _argument: str) -> None:
         self._session._console.print(
-            "/new  /resume <id>  /sessions  /model [provider/id]  "
-            "/tree  /branch <entry-id>  "
-            "/compact [target_tokens]  "
-            "/thinking [level]  "
-            "/templates  /<template> [arguments]  "
-            "/skill <name> [task]  /steer <message>  /follow-up <message>  "
-            "/clear  /help  /exit",
+            "Session\n"
+            "  /new                 Start a new session\n"
+            "  /clear               Clear screen and start a new session\n"
+            "  /clear-screen        Clear terminal output only\n"
+            "  /resume <id>         Resume a session\n"
+            "  /sessions            List sessions\n"
+            "  /tree                Show the current session tree\n"
+            "  /branch <entry-id>   Branch from an earlier entry\n"
+            "\nModel and context\n"
+            "  /model [provider/id] Select a model\n"
+            "  /thinking [level]    Set the reasoning level\n"
+            "  /compact [tokens]    Compact the current context\n"
+            "\nPrompts\n"
+            "  /templates           List prompt templates\n"
+            "  /<template> [args]   Run a prompt template\n"
+            "  /skill <name> [task] Run a skill\n"
+            "  /steer <message>     Redirect the active request\n"
+            "  /follow-up <message> Queue a follow-up request\n"
+            "\nApplication\n"
+            "  /help                Show commands\n"
+            "  /exit                Exit piY",
             style=self._session._theme.muted,
         )
+
+    async def _clear(self, _argument: str) -> None:
+        """清空屏幕并开始空白上下文，同时保留旧会话以便恢复。"""
+        if self._session._agent.is_busy:
+            self._session._console.print(
+                "Agent is busy. Wait for idle before clearing context.",
+                style=self._session._theme.warning,
+            )
+            return
+        if self._session._sessions_dir is None:
+            self._session._agent.reset()
+            self._session._pending_follow_ups.clear()
+            self._session._console.clear()
+            self._session._console.print("Context cleared.", style=self._session._theme.muted)
+            return
+        await self._switch_session("/new", "", clear_screen=True)
 
     async def _thinking(self, argument: str) -> None:
         model = self._session._agent.state.model
@@ -369,7 +401,19 @@ class CommandDispatcher:
                 style=self._session._theme.muted,
             )
 
-    async def _switch_session(self, command: str, argument: str) -> None:
+    async def _switch_session(
+        self,
+        command: str,
+        argument: str,
+        *,
+        clear_screen: bool = False,
+    ) -> None:
+        if self._session._agent.is_busy:
+            self._session._console.print(
+                "Agent is busy. Wait for idle before switching sessions.",
+                style=self._session._theme.warning,
+            )
+            return
         if self._session._sessions_dir is None:
             self._session._console.print(
                 "Session storage is disabled.",
@@ -402,15 +446,24 @@ class CommandDispatcher:
         await self._session._agent.switch_session(storage, session_id)
         self._session._session_storage = storage
         self._session._session_id = session_id
+        self._session._pending_follow_ups.clear()
         await self._session._restore_session_model()
+        if clear_screen:
+            self._session._console.clear()
         await self._session._emit_extension_event(
             "session_switch",
-            {"reason": command.lstrip("/"), "session_id": session_id},
+            {
+                "reason": "clear" if clear_screen else command.lstrip("/"),
+                "session_id": session_id,
+            },
         )
-        self._session._console.print(
-            f"Session: {session_id}",
-            style=self._session._theme.muted,
-        )
+        if clear_screen:
+            message = f"Context cleared. New session: {session_id}"
+        elif command == "/new":
+            message = f"New session: {session_id}"
+        else:
+            message = f"Resumed session: {session_id}"
+        self._session._console.print(message, style=self._session._theme.muted)
 
     async def _dynamic_command(self, command: str, argument: str) -> bool:
         extension_command = self._session._commands.get(command.lstrip("/"))

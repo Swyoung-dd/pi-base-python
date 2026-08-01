@@ -25,6 +25,7 @@ def test_dynamic_commands_are_included_in_completion() -> None:
     )
 
     assert "/deploy" in commands
+    assert "/clear-screen" in commands
     assert "/skill:release" in commands
     assert "/review" in commands
     assert "/model" in commands
