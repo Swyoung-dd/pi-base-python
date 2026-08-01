@@ -87,4 +87,3 @@ def format_tool_target(tool_name: str, arguments: dict) -> str:
     """生成工具树子项文本，去除分组标题已表达的工具名称。"""
     display = format_tool_display(tool_name, arguments)
     return display.removeprefix(f"{tool_name}: ")
-

@@ -61,6 +61,10 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
+[tool.ruff.format]
+# 生成文件由 scripts/generate_models.py 输出，不参与格式检查
+exclude = ["src/pi/ai/models_generated.py"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

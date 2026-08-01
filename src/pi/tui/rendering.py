@@ -178,9 +178,7 @@ class AgentEventRenderer:
                 self.state.thinking_printed = True
             self.state.current_text += event.delta
             self.state.stream_buffer += event.delta
-            complete, self.state.stream_buffer = split_complete_markdown(
-                self.state.stream_buffer
-            )
+            complete, self.state.stream_buffer = split_complete_markdown(self.state.stream_buffer)
             if complete:
                 console.print(Markdown(complete))
                 self.state.rendered_text += complete
@@ -211,8 +209,7 @@ class AgentEventRenderer:
             )
         elif event.type == "context_compacted":
             console.print(
-                f"Context compacted: {event.original_tokens} -> "
-                f"{event.compacted_tokens} tokens",
+                f"Context compacted: {event.original_tokens} -> {event.compacted_tokens} tokens",
                 style=theme.muted,
             )
         return RenderOutcome()
@@ -230,9 +227,7 @@ class AgentEventRenderer:
         )
         complete_text = final_text or self.state.current_text
         self.state.current_thinking = final_thinking or self.state.current_thinking
-        tool_calls = [
-            block for block in event.message.content if isinstance(block, ToolCall)
-        ]
+        tool_calls = [block for block in event.message.content if isinstance(block, ToolCall)]
         if complete_text.startswith(self.state.rendered_text):
             pending_text = complete_text[len(self.state.rendered_text) :]
         elif self.state.rendered_text:
@@ -247,4 +242,3 @@ class AgentEventRenderer:
         if renderable is not None:
             console.print(renderable)
         self.state.reset()
-

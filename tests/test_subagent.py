@@ -131,9 +131,7 @@ async def test_subagent_end_to_end() -> None:
         name="subagent",
         arguments={"task": "Summarize the repo", "tools": "none"},
     )
-    stream_fn, state = make_scripted_stream(
-        [subagent_call, "child done", "parent done"]
-    )
+    stream_fn, state = make_scripted_stream([subagent_call, "child done", "parent done"])
     agent = Agent(
         AgentOptions(
             model=make_model(),
@@ -163,9 +161,7 @@ async def test_subagent_max_turns() -> None:
         arguments={"task": "investigate", "tools": "analysis", "max_turns": 2},
     )
     read_call = ToolCall(id="r1", name="read", arguments={"path": "missing.py"})
-    stream_fn, state = make_scripted_stream(
-        [subagent_call, read_call, read_call, "parent done"]
-    )
+    stream_fn, state = make_scripted_stream([subagent_call, read_call, read_call, "parent done"])
     agent = Agent(
         AgentOptions(
             model=make_model(),
@@ -216,9 +212,7 @@ async def test_agent_loop_max_turns() -> None:
         parameters={"type": "object", "properties": {}},
         execute=stub_execute,
     )
-    stream_fn, state = make_scripted_stream(
-        [ToolCall(id="c1", name="stub", arguments={})]
-    )
+    stream_fn, state = make_scripted_stream([ToolCall(id="c1", name="stub", arguments={})])
     model = make_model()
 
     async def sink(event) -> None:

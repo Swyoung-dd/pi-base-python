@@ -40,9 +40,7 @@ PROMPT_STYLE_RULES = {
     "status.separator": "#525252",
 }
 PROMPT_STYLE_READY = Style.from_dict({**PROMPT_STYLE_RULES, "input.border": "#22d3ee"})
-PROMPT_STYLE_WORKING = Style.from_dict(
-    {**PROMPT_STYLE_RULES, "input.border": "#f59e0b"}
-)
+PROMPT_STYLE_WORKING = Style.from_dict({**PROMPT_STYLE_RULES, "input.border": "#f59e0b"})
 READY_ANIMATION = ("·", "•", "·", " ")
 WORKING_ANIMATION = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 ANIMATION_FPS = 8
@@ -91,7 +89,7 @@ def build_input_prompt(
     pending_follow_ups: Sequence[str] = (),
 ) -> StyleAndTextTuples:
     """构建状态轨道、待处理 follow-up 和开放式输入行。"""
-    header: StyleAndTextTuples = [("class:input.border", "╭─"), *status]
+    header: StyleAndTextTuples = [("", "\n"), ("class:input.border", "╭─"), *status]
     fill_width = max(1, console_width - fragment_list_width(header) - 1)
     header.append(("class:input.border", f"{'─' * fill_width}╮\n"))
     if pending_follow_ups:

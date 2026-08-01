@@ -30,8 +30,11 @@ class QueueMode(StrEnum):
 class ToolExecutionMode(StrEnum):
     PARALLEL = "parallel"
     SEQUENTIAL = "sequential"
+
+
 class AgentPhase(StrEnum):
     """Agent 运行时阶段，用于 turn snapshot 与 save point 机制。"""
+
     IDLE = "idle"
     TURN = "turn"
     COMPACTION = "compaction"
@@ -269,9 +272,9 @@ AgentEvent = (
     | MessageEndEvent
     | TextDeltaUpdateEvent
     | ThinkingDeltaUpdateEvent
-   | ToolExecutionStartEvent
+    | ToolExecutionStartEvent
     | ToolExecutionUpdateEvent
-   | ToolExecutionEndEvent
+    | ToolExecutionEndEvent
     | TurnEndEvent
     | AgentEndEvent
     | ContextCompactedEvent

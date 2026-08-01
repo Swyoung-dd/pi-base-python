@@ -59,12 +59,14 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
             return AgentToolResult(
                 tool_call_id=call.id,
                 tool_name="edit",
-                content=[TextContent(
-                    text=(
-                        f"old_text found {count} times in {path_arg}."
-                        " Provide more context to make it unique."
+                content=[
+                    TextContent(
+                        text=(
+                            f"old_text found {count} times in {path_arg}."
+                            " Provide more context to make it unique."
+                        )
                     )
-                )],
+                ],
                 is_error=True,
             )
 

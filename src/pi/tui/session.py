@@ -105,9 +105,7 @@ class InteractiveSession:
         self._commands = commands or {}
         self._extension_context = extension_context or ExtensionContext()
         self._skills = {skill.name: skill for skill in skills or []}
-        self._prompt_templates = {
-            template.name: template for template in prompt_templates or []
-        }
+        self._prompt_templates = {template.name: template for template in prompt_templates or []}
         validate_command_names(set(self._commands), set(self._prompt_templates))
         self._credential_store = credential_store or get_default_credential_store()
         self._on_model_selected = on_model_selected
@@ -182,9 +180,7 @@ class InteractiveSession:
     def _set_request_active(self, active: bool) -> None:
         """同步更新请求状态、输入框边框与动态提示。"""
         self._request_active = active
-        self._prompt_session.style = (
-            PROMPT_STYLE_WORKING if active else PROMPT_STYLE_READY
-        )
+        self._prompt_session.style = PROMPT_STYLE_WORKING if active else PROMPT_STYLE_READY
         self._refresh_prompt()
 
     def _refresh_prompt(self) -> None:
@@ -207,8 +203,7 @@ class InteractiveSession:
             return
         cache = f" / {usage.cache_read} cached" if usage.cache_read else ""
         self._console.print(
-            f"{usage.input} in / {usage.output} out / "
-            f"{usage.total_tokens} total tokens{cache}",
+            f"{usage.input} in / {usage.output} out / {usage.total_tokens} total tokens{cache}",
             style=self._theme.muted,
         )
 
@@ -221,7 +216,6 @@ class InteractiveSession:
             self._git_status = await asyncio.to_thread(_read_git_status, self._cwd)
             self._set_request_active(False)
             self._print_request_usage()
-            self._console.print()
 
     async def _handle_command(self, prompt: str) -> tuple[bool, bool]:
         """把输入委托给命令分发器。"""
@@ -284,8 +278,7 @@ class InteractiveSession:
         failures = await self._extension_context.emit(event_type, data, self._agent)
         for failure in failures:
             self._console.print(
-                f"Extension {failure.source} failed during "
-                f"{failure.event_type}: {failure.error}",
+                f"Extension {failure.source} failed during {failure.event_type}: {failure.error}",
                 style=self._theme.error,
             )
 
@@ -302,7 +295,6 @@ class InteractiveSession:
 
         sessions = await list_sessions(self._sessions_dir) if self._sessions_dir else []
         self._console.print(self._welcome_panel(__version__, sessions))
-        self._console.print()
 
         previous_sigint = signal.getsignal(signal.SIGINT)
 

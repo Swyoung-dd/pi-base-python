@@ -282,9 +282,7 @@ def test_busy_follow_up_is_pinned_without_console_output(tmp_path, monkeypatch):
     assert len(queued) == 1
     assert queued[0].content == "expanded prompt"
     assert session._pending_follow_ups == ["review @README.md"]
-    assert "↳ follow-up  review @README.md" in fragment_list_to_text(
-        session._input_prompt()
-    )
+    assert "↳ follow-up  review @README.md" in fragment_list_to_text(session._input_prompt())
     session._console.print.assert_not_called()
 
 
@@ -395,7 +393,8 @@ def test_prompt_uses_open_status_frame_and_placeholder(tmp_path):
 
     assert session._prompt_session.show_frame is False
     assert session._prompt_session.placeholder
-    assert prompt.startswith("╭─")
+    assert prompt.startswith("\n╭─")
+    assert not prompt.startswith("\n\n")
     assert "\n╰─" in prompt
 
 
@@ -441,7 +440,7 @@ def test_input_status_shows_git_and_fits_terminal_width(tmp_path):
     session._console = Console(width=160)
 
     status = _status_text(session)
-    header = fragment_list_to_text(session._input_prompt()).splitlines()[0]
+    header = fragment_list_to_text(session._input_prompt()).splitlines()[1]
 
     assert "○ main +2" in status
     assert str(display_cwd) in status
@@ -461,11 +460,12 @@ def test_follow_up_prompt_is_single_row_and_fits_terminal_width(tmp_path):
 
     lines = fragment_list_to_text(session._input_prompt()).splitlines()
 
-    assert len(lines) == 3
-    assert "↳ follow-up" in lines[1]
-    assert "+1 more" in lines[1]
-    assert "\n" not in lines[1]
-    assert fragment_list_width([("", lines[1])]) == 48
+    assert len(lines) == 4
+    assert lines[0] == ""
+    assert "↳ follow-up" in lines[2]
+    assert "+1 more" in lines[2]
+    assert "\n" not in lines[2]
+    assert fragment_list_width([("", lines[2])]) == 48
 
 
 async def test_agent_end_consumes_one_pinned_follow_up(tmp_path):
@@ -747,9 +747,7 @@ async def test_turn_usage_is_aggregated_before_display(tmp_path):
 
     await session._on_event(
         TurnEndEvent(
-            message=AgentAssistantMessage(
-                usage=Usage(input=100, output=20, total_tokens=120)
-            )
+            message=AgentAssistantMessage(usage=Usage(input=100, output=20, total_tokens=120))
         )
     )
     await session._on_event(
@@ -768,7 +766,7 @@ async def test_turn_usage_is_aggregated_before_display(tmp_path):
     )
 
 
-async def test_request_completion_adds_space_before_next_input(tmp_path, monkeypatch):
+async def test_request_completion_does_not_print_duplicate_spacing(tmp_path, monkeypatch):
     session = InteractiveSession(
         model=list_models()[0],
         system_prompt="",
@@ -789,6 +787,7 @@ async def test_request_completion_adds_space_before_next_input(tmp_path, monkeyp
     await session._run_agent_prompt("hello")
 
     assert session._pending_follow_ups == []
-    assert session._console.print.call_count == 2
-    assert session._console.print.call_args_list[-1].args == ()
-    assert session._console.print.call_args_list[-1].kwargs == {}
+    session._console.print.assert_called_once_with(
+        "10 in / 2 out / 12 total tokens",
+        style=session._theme.muted,
+    )

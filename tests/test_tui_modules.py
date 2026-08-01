@@ -57,4 +57,3 @@ def test_tool_display_and_render_state_are_independent_of_session() -> None:
     state.reset()
 
     assert state == MessageRenderState()
-

@@ -27,8 +27,7 @@ def create_compact_tool() -> AgentTool:
             tool_name=call.name,
             content=[
                 TextContent(
-                    text="Context compaction was requested and will run before the next "
-                    "model call."
+                    text="Context compaction was requested and will run before the next model call."
                 )
             ],
             details=ContextCompactionRequest(target_tokens=target_tokens),

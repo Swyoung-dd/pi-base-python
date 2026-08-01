@@ -137,11 +137,7 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
         return _error(call, f"invalid tools mode: {tools_mode}")
 
     max_turns = call.arguments.get("max_turns", DEFAULT_MAX_TURNS)
-    if (
-        not isinstance(max_turns, int)
-        or isinstance(max_turns, bool)
-        or not 1 <= max_turns <= 100
-    ):
+    if not isinstance(max_turns, int) or isinstance(max_turns, bool) or not 1 <= max_turns <= 100:
         return _error(call, "max_turns must be an integer between 1 and 100")
 
     model = _resolve_model(call.arguments.get("model"), parent)

@@ -62,6 +62,7 @@ async def execute(call: AgentToolCall, ctx: ToolContext | None) -> AgentToolResu
             files = [f for f in files if f.is_file()]
             if include:
                 import fnmatch
+
                 files = [f for f in files if fnmatch.fnmatch(f.name, include)]
 
         for file_path in files:

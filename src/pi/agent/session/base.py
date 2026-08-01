@@ -160,7 +160,8 @@ class SessionStorage(abc.ABC):
             data["summary"] = summary
         if retained_tail is not None:
             data["retained_tail"] = _MESSAGES_ADAPTER.dump_python(
-                retained_tail, mode="json",
+                retained_tail,
+                mode="json",
             )
         entry = SessionEntry(
             parent_id=leaf,
@@ -200,7 +201,9 @@ class SessionStorage(abc.ABC):
         return entry_id
 
     async def append_custom_entry(
-        self, entry_type: str, data: dict[str, Any],
+        self,
+        entry_type: str,
+        data: dict[str, Any],
     ) -> str:
         """追加自定义类型条目。"""
         leaf = await self.get_leaf_id()

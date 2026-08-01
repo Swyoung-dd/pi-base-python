@@ -84,6 +84,7 @@ class JsonlStorage(SessionStorage):
 
     def _write_header(self, cwd: str | None = None) -> None:
         from pi.agent.session.base import create_session_header
+
         header = create_session_header(cwd)
         with open(self._path, "a", encoding="utf-8") as f:
             f.write(json.dumps(header, ensure_ascii=False))

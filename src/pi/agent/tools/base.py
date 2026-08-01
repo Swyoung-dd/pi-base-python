@@ -14,6 +14,7 @@ class ToolContext:
     提供工作目录和可选的共享状态。
     与文件系统交互的工具以 cwd 为基础路径。
     """
+
     cwd: Path = field(default_factory=Path.cwd)
     state: dict[str, Any] = field(default_factory=dict)
 

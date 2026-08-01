@@ -344,6 +344,7 @@ class Agent:
         空闲时立即生效；运行中时排队到下一个 save point 应用。
         """
         if self.is_busy:
+
             async def apply() -> None:
                 self._state.model = model
                 self._context_token_limit = (
@@ -353,8 +354,10 @@ class Agent:
                 )
                 if self._session_storage is not None:
                     await self._session_storage.append_model_change(
-                        model.provider, model.id,
+                        model.provider,
+                        model.id,
                     )
+
             self._pending_writes.append(apply)
             return
         self._state.model = model
@@ -370,6 +373,7 @@ class Agent:
         空闲时立即生效；运行中时排队到下一个 save point 应用。
         """
         if self.is_busy:
+
             async def apply() -> None:
                 self._thinking_level = level
                 self._state.thinking_level = level.value
@@ -377,6 +381,7 @@ class Agent:
                     await self._session_storage.append_thinking_level_change(
                         level.value,
                     )
+
             self._pending_writes.append(apply)
             return
         self._thinking_level = level
@@ -470,7 +475,7 @@ class Agent:
                     max_turns=self._max_turns,
                     before_tool_call=self._before_tool_call,
                     after_tool_call=self._after_tool_call,
-                    )
+                )
                 current_context = result.context_messages
                 if self._session_storage is not None:
                     # P0-2: 始终追加原始消息，压缩时额外追加检查点
@@ -490,7 +495,7 @@ class Agent:
                             compaction.dropped_messages,
                             compaction.usage,
                             summary=summary_text,
-                           retained_tail=current_context,
+                            retained_tail=current_context,
                         )
                 # Save point: apply queued config changes for next turn
                 await self._flush_pending_writes()

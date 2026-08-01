@@ -27,9 +27,7 @@ class DeepSeekProvider(OpenAIProvider):
         for source in context.messages:
             if isinstance(source, AssistantMessage):
                 reasoning = "".join(
-                    block.thinking
-                    for block in source.content
-                    if isinstance(block, ThinkingContent)
+                    block.thinking for block in source.content if isinstance(block, ThinkingContent)
                 )
                 if reasoning:
                     messages[output_index]["reasoning_content"] = reasoning

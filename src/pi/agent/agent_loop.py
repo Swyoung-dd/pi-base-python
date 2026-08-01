@@ -104,8 +104,7 @@ def _validate_tool_arguments(
                 return f"Parameter '{field_name}' must be number, got boolean"
             if not isinstance(value, py_type):
                 return (
-                    f"Parameter '{field_name}' must be {expected_type},"
-                    f" got {type(value).__name__}"
+                    f"Parameter '{field_name}' must be {expected_type}, got {type(value).__name__}"
                 )
             enum_values = field_schema.get("enum")
         if enum_values and value not in enum_values:
@@ -250,8 +249,8 @@ async def run_agent_loop(
     tool_execution: ToolExecutionMode = ToolExecutionMode.PARALLEL,
     tool_context: Any = None,
     get_steering_messages: Callable[[], list[AgentMessage]] | None = None,
-   compact_fn: CompactFn | None = None,
-   max_turns: int | None = None,
+    compact_fn: CompactFn | None = None,
+    max_turns: int | None = None,
     before_tool_call: BeforeToolCallFn | None = None,
     after_tool_call: AfterToolCallFn | None = None,
 ) -> AgentLoopResult:
@@ -467,7 +466,8 @@ async def run_agent_loop(
             # Validate arguments against tool's JSON Schema before execution.
             if tool is not None:
                 validation_error = _validate_tool_arguments(
-                    tool_call.arguments, tool.parameters,
+                    tool_call.arguments,
+                    tool.parameters,
                 )
                 if validation_error:
                     result = AgentToolResult(
@@ -611,8 +611,8 @@ async def run_agent_loop(
                 ContextCompactedEvent(
                     original_tokens=compacted.original_tokens,
                     compacted_tokens=compacted.compacted_tokens,
-                   dropped_messages=compacted.dropped_messages,
-               )
+                    dropped_messages=compacted.dropped_messages,
+                )
             )
 
         await sink(TurnEndEvent(message=agent_msg, tool_results=tool_results))

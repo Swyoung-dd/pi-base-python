@@ -255,14 +255,14 @@ async def test_compact_tool_requests_compaction_inside_agent_loop():
     await agent.prompt("compact now")
 
     assert len(main_contexts) == 2
-    assert main_contexts[1].messages[0].content.startswith(
-        "[已压缩的早期对话]\ntool generated summary"
+    assert (
+        main_contexts[1]
+        .messages[0]
+        .content.startswith("[已压缩的早期对话]\ntool generated summary")
     )
     assert "context_compacted" in event_types
     tool_results = [
-        message
-        for message in agent.state.messages
-        if isinstance(message, AgentToolResultMessage)
+        message for message in agent.state.messages if isinstance(message, AgentToolResultMessage)
     ]
     assert tool_results
     assert not tool_results[-1].is_error

@@ -229,9 +229,7 @@ class CommandDispatcher:
         selected: Model | None = None
         if argument:
             matches = [
-                model
-                for model in models
-                if argument in (model.id, f"{model.provider}/{model.id}")
+                model for model in models if argument in (model.id, f"{model.provider}/{model.id}")
             ]
             if len(matches) != 1:
                 self._session._console.print(

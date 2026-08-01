@@ -19,4 +19,3 @@ class SafeInMemoryHistory(InMemoryHistory):
     def store_string(self, string: str) -> None:
         if not contains_likely_api_key(string):
             super().store_string(string)
-

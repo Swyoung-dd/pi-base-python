@@ -89,10 +89,8 @@ async def test_openai_sse_emits_reasoning_content(monkeypatch):
     _install_fake_client(
         monkeypatch,
         [
-            'data: {"choices":[{"delta":{"reasoning_content":"think"},'
-            '"finish_reason":null}]}',
-            'data: {"choices":[{"delta":{"content":"answer"},'
-            '"finish_reason":"stop"}]}',
+            'data: {"choices":[{"delta":{"reasoning_content":"think"},"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{"content":"answer"},"finish_reason":"stop"}]}',
             "data: [DONE]",
         ],
     )

@@ -24,6 +24,8 @@ jobs:
         run: uv sync --locked --all-extras --python ${{ matrix.python-version }}
       - name: Lint
         run: uv run --locked ruff check src tests scripts
+      - name: Format check
+        run: uv run --locked ruff format --check src tests scripts
       - name: Verify model catalog
         run: uv run --locked python scripts/generate_models.py --check
       - name: Test
