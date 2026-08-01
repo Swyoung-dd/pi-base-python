@@ -6,7 +6,7 @@ AgentTool 将 pi-ai Tool 与异步 execute 函数封装在一起。
 
 from __future__ import annotations
 
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
@@ -30,6 +30,12 @@ class QueueMode(StrEnum):
 class ToolExecutionMode(StrEnum):
     PARALLEL = "parallel"
     SEQUENTIAL = "sequential"
+class AgentPhase(StrEnum):
+    """Agent 运行时阶段，用于 turn snapshot 与 save point 机制。"""
+    IDLE = "idle"
+    TURN = "turn"
+    COMPACTION = "compaction"
+    BRANCH_SUMMARY = "branch_summary"
 
 
 # ---- Agent 消息（扩展 LLM 消息，添加 agent 元数据） ----
@@ -85,6 +91,8 @@ class AgentTool:
     description: str
     parameters: dict[str, Any]  # JSON Schema
     execute: ToolExecuteFn
+    execution_mode: ToolExecutionMode | None = None
+    prepare_arguments: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
     def to_ai_tool(self) -> Tool:
         from pi.ai.types import ToolParameterSchema
@@ -118,6 +126,8 @@ class AgentToolResult:
     content: list[TextContent | ImageContent] = field(default_factory=list)
     details: Any = None
     is_error: bool = False
+    terminate: bool = False
+    usage: Usage | None = None
 
 
 @dataclass(frozen=True)
@@ -201,6 +211,17 @@ class ToolExecutionStartEvent:
 
 
 @dataclass
+class ToolExecutionUpdateEvent:
+    """工具执行过程中的增量进度事件。"""
+
+    type: Literal["tool_execution_update"] = "tool_execution_update"
+    tool_call_id: str = ""
+    tool_name: str = ""
+    content: list[TextContent | ImageContent] = field(default_factory=list)
+    details: Any = None
+
+
+@dataclass
 class ToolExecutionEndEvent:
     type: Literal["tool_execution_end"] = "tool_execution_end"
     tool_call_id: str = ""
@@ -248,8 +269,9 @@ AgentEvent = (
     | MessageEndEvent
     | TextDeltaUpdateEvent
     | ThinkingDeltaUpdateEvent
-    | ToolExecutionStartEvent
-    | ToolExecutionEndEvent
+   | ToolExecutionStartEvent
+    | ToolExecutionUpdateEvent
+   | ToolExecutionEndEvent
     | TurnEndEvent
     | AgentEndEvent
     | ContextCompactedEvent
@@ -258,6 +280,11 @@ AgentEvent = (
 
 
 AgentEventSink = Callable[[AgentEvent], Coroutine[Any, Any, None]]
+BeforeToolCallFn = Callable[[AgentToolCall, AgentTool | None], Awaitable[None]]
+AfterToolCallFn = Callable[
+    [AgentToolCall, AgentTool | None, AgentToolResult],
+    Awaitable[None],
+]
 
 
 # ---- 辅助函数 ----

@@ -171,13 +171,18 @@ async def _terminate_process_tree(
     if proc.returncode is not None:
         return
     if os.name == "nt":
-        await asyncio.to_thread(
-            subprocess.run,
-            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
+        with suppress(TimeoutError):
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    subprocess.run,
+                    ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    timeout=10,
+                ),
+                timeout=15,
+            )
         with suppress(ProcessLookupError):
             proc.kill()
     else:

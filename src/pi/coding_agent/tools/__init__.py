@@ -1,4 +1,4 @@
-"""内置编码工具：read、write、edit、bash、ls、find、grep。"""
+"""内置编码工具：read、write、edit、bash、ls、find、grep、subagent。"""
 
 from pi.coding_agent.tools.bash import create_bash_tool
 from pi.coding_agent.tools.edit import create_edit_tool

@@ -352,6 +352,7 @@ class CommandDispatcher:
         self._session._submit_agent_prompt(
             expand_file_references(argument, self._session._cwd),
             follow_up=command == "/follow-up",
+            display_prompt=argument,
         )
 
     async def _sessions(self, _argument: str) -> None:

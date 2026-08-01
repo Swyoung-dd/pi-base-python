@@ -14,6 +14,7 @@ from rich.panel import Panel
 from pi.agent.session import JsonlStorage
 from pi.agent.types import (
     AgentAssistantMessage,
+    AgentEndEvent,
     MessageEndEvent,
     MessageStartEvent,
     TextDeltaUpdateEvent,
@@ -259,6 +260,52 @@ def test_busy_session_queues_prompt_as_steering(tmp_path, monkeypatch):
     assert queued[0].content == "correction"
 
 
+def test_busy_follow_up_is_pinned_without_console_output(tmp_path, monkeypatch):
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        history_file=tmp_path / "history",
+    )
+    queued = []
+    session._agent._idle_event.clear()
+    session._console.print = Mock()
+    monkeypatch.setattr(session._agent, "follow_up", queued.append)
+
+    session._submit_agent_prompt(
+        "expanded prompt",
+        follow_up=True,
+        display_prompt="review @README.md",
+    )
+
+    assert len(queued) == 1
+    assert queued[0].content == "expanded prompt"
+    assert session._pending_follow_ups == ["review @README.md"]
+    assert "↳ follow-up  review @README.md" in fragment_list_to_text(
+        session._input_prompt()
+    )
+    session._console.print.assert_not_called()
+
+
+def test_only_valid_busy_follow_up_input_is_erased(tmp_path):
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        history_file=tmp_path / "history",
+    )
+
+    assert not session._should_erase_prompt_input("/follow-up next")
+    session._agent._idle_event.clear()
+
+    assert session._should_erase_prompt_input("/follow-up next")
+    assert session._should_erase_prompt_input("  /follow-up 中文")
+    assert not session._should_erase_prompt_input("/follow-up")
+    assert not session._should_erase_prompt_input("/steer next")
+
+
 async def test_prompt_template_command_submits_expanded_prompt(tmp_path, monkeypatch):
     template = PromptTemplate(
         name="review",
@@ -399,6 +446,41 @@ def test_input_status_shows_git_and_fits_terminal_width(tmp_path):
     assert "○ main +2" in status
     assert str(display_cwd) in status
     assert fragment_list_width([("", header)]) == 160
+
+
+def test_follow_up_prompt_is_single_row_and_fits_terminal_width(tmp_path):
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        history_file=tmp_path / "history",
+    )
+    session._console = Console(width=48)
+    session._pending_follow_ups = ["检查中文宽度并处理一段非常长的说明", "second"]
+
+    lines = fragment_list_to_text(session._input_prompt()).splitlines()
+
+    assert len(lines) == 3
+    assert "↳ follow-up" in lines[1]
+    assert "+1 more" in lines[1]
+    assert "\n" not in lines[1]
+    assert fragment_list_width([("", lines[1])]) == 48
+
+
+async def test_agent_end_consumes_one_pinned_follow_up(tmp_path):
+    session = InteractiveSession(
+        model=list_models()[0],
+        system_prompt="",
+        tools=[],
+        stream_fn=_unused_stream,
+        history_file=tmp_path / "history",
+    )
+    session._pending_follow_ups = ["first", "second"]
+
+    await session._on_event(AgentEndEvent())
+
+    assert session._pending_follow_ups == ["second"]
 
 
 def test_file_history_does_not_store_likely_api_keys(tmp_path):
@@ -695,6 +777,7 @@ async def test_request_completion_adds_space_before_next_input(tmp_path, monkeyp
         history_file=tmp_path / "history",
     )
     session._request_usage = Usage(input=10, output=2, total_tokens=12)
+    session._pending_follow_ups = ["stale follow-up"]
     session._console.print = Mock()
 
     async def complete(prompt):
@@ -705,6 +788,7 @@ async def test_request_completion_adds_space_before_next_input(tmp_path, monkeyp
 
     await session._run_agent_prompt("hello")
 
+    assert session._pending_follow_ups == []
     assert session._console.print.call_count == 2
     assert session._console.print.call_args_list[-1].args == ()
     assert session._console.print.call_args_list[-1].kwargs == {}

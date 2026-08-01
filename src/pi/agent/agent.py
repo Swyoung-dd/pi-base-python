@@ -24,13 +24,16 @@ from pi.agent.compaction import (
 )
 from pi.agent.session.base import SessionStorage
 from pi.agent.types import (
+    AfterToolCallFn,
     AgentAssistantMessage,
     AgentContext,
     AgentEndEvent,
     AgentEvent,
     AgentMessage,
+    AgentPhase,
     AgentState,
     AgentTool,
+    BeforeToolCallFn,
     MessageEndEvent,
     MessageStartEvent,
     QueueMode,
@@ -87,6 +90,24 @@ class AgentOptions:
     max_turns: int | None = None
     thinking_level: ModelThinkingLevel = ModelThinkingLevel.OFF
     thinking_budget_tokens: int | None = None
+    before_tool_call: BeforeToolCallFn | None = None
+    after_tool_call: AfterToolCallFn | None = None
+
+
+@dataclass(frozen=True)
+class _TurnState:
+    """单个 turn 的冻结配置快照，确保 turn 内配置不被中途修改影响。"""
+
+    model: Model | None
+    thinking_level: ModelThinkingLevel
+    system_prompt: str
+    tools: list[AgentTool]
+    tool_context: Any
+    context_token_limit: int | None
+    compact_to_tokens: int | None
+    temperature: float | None
+    max_tokens: int | None
+    thinking_budget_tokens: int | None
 
 
 @dataclass(frozen=True)
@@ -167,6 +188,10 @@ class Agent:
         self._max_turns = options.max_turns
         self._thinking_level = options.thinking_level
         self._thinking_budget_tokens = options.thinking_budget_tokens
+        self._before_tool_call = options.before_tool_call
+        self._after_tool_call = options.after_tool_call
+        self._phase: AgentPhase = AgentPhase.IDLE
+        self._pending_writes: list = []
         self._abort_event = asyncio.Event()
         self._idle_event = asyncio.Event()
         self._idle_event.set()
@@ -314,9 +339,24 @@ class Agent:
         await self.restore()
 
     def set_model(self, model: Model) -> None:
-        """在空闲状态切换后续请求使用的模型。"""
+        """切换后续请求使用的模型。
+
+        空闲时立即生效；运行中时排队到下一个 save point 应用。
+        """
         if self.is_busy:
-            raise RuntimeError("Agent is already processing")
+            async def apply() -> None:
+                self._state.model = model
+                self._context_token_limit = (
+                    max(1, model.context_window - (self._max_tokens or model.max_tokens or 4096))
+                    if model.context_window
+                    else None
+                )
+                if self._session_storage is not None:
+                    await self._session_storage.append_model_change(
+                        model.provider, model.id,
+                    )
+            self._pending_writes.append(apply)
+            return
         self._state.model = model
         self._context_token_limit = (
             max(1, model.context_window - (self._max_tokens or model.max_tokens or 4096))
@@ -325,11 +365,50 @@ class Agent:
         )
 
     def set_thinking_level(self, level: ModelThinkingLevel) -> None:
-        """在空闲状态切换后续请求使用的思考级别。"""
+        """切换后续请求使用的思考级别。
+
+        空闲时立即生效；运行中时排队到下一个 save point 应用。
+        """
         if self.is_busy:
-            raise RuntimeError("Agent is already processing")
+            async def apply() -> None:
+                self._thinking_level = level
+                self._state.thinking_level = level.value
+                if self._session_storage is not None:
+                    await self._session_storage.append_thinking_level_change(
+                        level.value,
+                    )
+            self._pending_writes.append(apply)
+            return
         self._thinking_level = level
         self._state.thinking_level = level.value
+
+    @property
+    def phase(self) -> AgentPhase:
+        """返回当前运行时阶段。"""
+        return self._phase
+
+    def _create_turn_state(self) -> _TurnState:
+        """创建当前配置的冻结快照，用于本次 turn 的全部请求。"""
+        return _TurnState(
+            model=self._state.model,
+            thinking_level=self._thinking_level,
+            system_prompt=self._state.system_prompt,
+            tools=self._state.tools[:],
+            tool_context=self._tool_context,
+            context_token_limit=self._context_token_limit,
+            compact_to_tokens=self._compact_to_tokens,
+            temperature=self._temperature,
+            max_tokens=self._max_tokens,
+            thinking_budget_tokens=self._thinking_budget_tokens,
+        )
+
+    async def _flush_pending_writes(self) -> None:
+        """在 save point 应用排队的配置变更。"""
+        if not self._pending_writes:
+            return
+        for write in self._pending_writes:
+            await write()
+        self._pending_writes.clear()
 
     def reset(self) -> None:
         self._state.messages.clear()
@@ -355,6 +434,7 @@ class Agent:
         self._abort_event.clear()
         self._idle_event.clear()
         self._state.is_streaming = True
+        self._phase = AgentPhase.TURN
         previous_messages = self._state.messages[:]
         self._state.messages.extend(messages)
 
@@ -362,46 +442,58 @@ class Agent:
             current_context = previous_messages
             pending_prompts = messages
             while pending_prompts:
+                turn_state = self._create_turn_state()
                 result: AgentLoopResult = await run_agent_loop(
                     prompts=pending_prompts,
                     context=AgentContext(
-                        system_prompt=self._state.system_prompt,
+                        system_prompt=turn_state.system_prompt,
                         messages=current_context,
-                        tools=self._state.tools[:],
+                        tools=turn_state.tools,
                     ),
-                    model=self._state.model,
+                    model=turn_state.model,
                     stream_fn=self._stream_fn,
                     sink=self._process_event,
                     options=StreamOptions(
-                        temperature=self._temperature,
-                        max_tokens=self._max_tokens,
+                        temperature=turn_state.temperature,
+                        max_tokens=turn_state.max_tokens,
                         session_id=self._session_id,
                         abort_event=self._abort_event,
-                        context_token_limit=self._context_token_limit,
-                        compact_to_tokens=self._compact_to_tokens,
-                        thinking_level=self._thinking_level,
-                        thinking_budget_tokens=self._thinking_budget_tokens,
+                        context_token_limit=turn_state.context_token_limit,
+                        compact_to_tokens=turn_state.compact_to_tokens,
+                        thinking_level=turn_state.thinking_level,
+                        thinking_budget_tokens=turn_state.thinking_budget_tokens,
                     ),
                     tool_execution=self._tool_execution,
-                    tool_context=self._tool_context,
+                    tool_context=turn_state.tool_context,
                     get_steering_messages=self._steering_queue.drain,
                     compact_fn=self._compact_with_model,
                     max_turns=self._max_turns,
-                )
+                    before_tool_call=self._before_tool_call,
+                    after_tool_call=self._after_tool_call,
+                    )
                 current_context = result.context_messages
                 if self._session_storage is not None:
+                    # P0-2: 始终追加原始消息，压缩时额外追加检查点
+                    for message in result.messages:
+                        await self._session_storage.append_message(message)
                     if result.compactions:
                         compaction = result.compactions[-1]
+                        summary_text = ""
+                        if current_context:
+                            first = current_context[0]
+                            if hasattr(first, "content") and isinstance(first.content, str):
+                                summary_text = first.content
                         await self._session_storage.append_compaction(
                             current_context,
                             compaction.original_tokens,
                             compaction.compacted_tokens,
                             compaction.dropped_messages,
                             compaction.usage,
+                            summary=summary_text,
+                           retained_tail=current_context,
                         )
-                    else:
-                        for message in result.messages:
-                            await self._session_storage.append_message(message)
+                # Save point: apply queued config changes for next turn
+                await self._flush_pending_writes()
                 last_assistant = next(
                     (
                         message
@@ -434,6 +526,7 @@ class Agent:
             await self._process_event(AgentEndEvent(messages=[failure]))
         finally:
             self._state.is_streaming = False
+            self._phase = AgentPhase.IDLE
             self._state.streaming_message = None
             self._state.pending_tool_calls.clear()
             self._idle_event.set()

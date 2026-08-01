@@ -20,6 +20,23 @@ from pi.ai.types import Usage
 
 _MESSAGE_ADAPTER = TypeAdapter(AgentMessage)
 _MESSAGES_ADAPTER = TypeAdapter(list[AgentMessage])
+SESSION_VERSION = 2
+
+
+def create_session_header(cwd: str | None = None) -> dict[str, Any]:
+    """创建会话文件头行（v2 格式）。"""
+    return {
+        "type": "session",
+        "version": SESSION_VERSION,
+        "id": _gen_id(),
+        "timestamp": _utc_now_iso(),
+        "cwd": cwd or "",
+    }
+
+
+def is_session_header(data: dict[str, Any]) -> bool:
+    """判断 JSON 字典是否为会话头行。"""
+    return data.get("type") == "session" and "version" in data
 
 
 def _utc_now_iso() -> str:
@@ -122,19 +139,87 @@ class SessionStorage(abc.ABC):
         compacted_tokens: int,
         dropped_messages: int,
         usage: Usage | None = None,
+        *,
+        summary: str | None = None,
+        retained_tail: list[AgentMessage] | None = None,
     ) -> str:
-        """追加包含完整有效上下文的压缩检查点。"""
+        """追加压缩检查点。
+
+        v2 格式：存储 summary（摘要文本）和 retained_tail（保留的消息尾部），
+        同时保留 messages 字段以兼容旧版读取。
+        """
         leaf = await self.get_leaf_id()
+        data: dict[str, Any] = {
+            "messages": _MESSAGES_ADAPTER.dump_python(messages, mode="json"),
+            "original_tokens": original_tokens,
+            "compacted_tokens": compacted_tokens,
+            "dropped_messages": dropped_messages,
+            "usage": usage.model_dump(mode="json") if usage is not None else None,
+        }
+        if summary is not None:
+            data["summary"] = summary
+        if retained_tail is not None:
+            data["retained_tail"] = _MESSAGES_ADAPTER.dump_python(
+                retained_tail, mode="json",
+            )
         entry = SessionEntry(
             parent_id=leaf,
             type="compaction",
-            data={
-                "messages": _MESSAGES_ADAPTER.dump_python(messages, mode="json"),
-                "original_tokens": original_tokens,
-                "compacted_tokens": compacted_tokens,
-                "dropped_messages": dropped_messages,
-                "usage": usage.model_dump(mode="json") if usage is not None else None,
-            },
+            data=data,
+        )
+        entry_id = await self.append(entry)
+        await self.set_leaf_id(entry_id)
+        return entry_id
+
+        entry_id = await self.append(entry)
+        await self.set_leaf_id(entry_id)
+        return entry_id
+
+    async def append_thinking_level_change(self, level: str) -> str:
+        """记录思考级别变更。"""
+        leaf = await self.get_leaf_id()
+        entry = SessionEntry(
+            parent_id=leaf,
+            type="thinking_level_change",
+            data={"level": level},
+        )
+        entry_id = await self.append(entry)
+        await self.set_leaf_id(entry_id)
+        return entry_id
+
+    async def append_branch_summary(self, summary: str) -> str:
+        """记录分支摘要。"""
+        leaf = await self.get_leaf_id()
+        entry = SessionEntry(
+            parent_id=leaf,
+            type="branch_summary",
+            data={"summary": summary},
+        )
+        entry_id = await self.append(entry)
+        await self.set_leaf_id(entry_id)
+        return entry_id
+
+    async def append_custom_entry(
+        self, entry_type: str, data: dict[str, Any],
+    ) -> str:
+        """追加自定义类型条目。"""
+        leaf = await self.get_leaf_id()
+        entry = SessionEntry(
+            parent_id=leaf,
+            type=entry_type,
+            data=data,
+        )
+        entry_id = await self.append(entry)
+        await self.set_leaf_id(entry_id)
+        return entry_id
+
+    async def append_session_info(self, key: str, value: Any) -> str:
+        """记录或更新会话信息键值对。"""
+        leaf = await self.get_leaf_id()
+        entry = SessionEntry(
+            parent_id=leaf,
+            type="session_info",
+            data={"key": key, "value": value},
         )
         entry_id = await self.append(entry)
         await self.set_leaf_id(entry_id)
@@ -177,11 +262,24 @@ class SessionStorage(abc.ABC):
         return None
 
     async def get_context_messages(self) -> list[AgentMessage]:
-        """从最近压缩检查点恢复有效上下文，并追加其后的消息。"""
+        """从最近压缩检查点恢复有效上下文，并追加其后的消息。
+
+        v2 格式优先使用 summary + retained_tail 重建上下文；
+        旧格式（仅 messages 字段）仍然兼容。
+        """
         messages: list[AgentMessage] = []
         for entry in await self.get_branch():
-            if entry.type == "compaction" and entry.data and entry.data.get("messages") is not None:
-                messages = _MESSAGES_ADAPTER.validate_python(entry.data["messages"])
+            if entry.type == "compaction" and entry.data:
+                if entry.data.get("retained_tail") is not None:
+                    # v2: retained_tail 存储完整的压缩后上下文
+                    messages = _MESSAGES_ADAPTER.validate_python(
+                        entry.data["retained_tail"],
+                    )
+                elif entry.data.get("messages") is not None:
+                    # v1: 直接使用存储的完整消息列表
+                    messages = _MESSAGES_ADAPTER.validate_python(
+                        entry.data["messages"],
+                    )
             elif entry.type == "message" and entry.message is not None:
                 messages.append(entry.message)
         return messages

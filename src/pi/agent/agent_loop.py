@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -24,6 +25,7 @@ from pi.agent.compaction import (
     estimate_context_tokens_with_overhead,
 )
 from pi.agent.types import (
+    AfterToolCallFn,
     AgentAssistantMessage,
     AgentContext,
     AgentEndEvent,
@@ -34,6 +36,7 @@ from pi.agent.types import (
     AgentToolResult,
     AgentToolResultMessage,
     AgentUserMessage,
+    BeforeToolCallFn,
     ContextCompactedEvent,
     ContextCompactionRequest,
     MessageEndEvent,
@@ -64,6 +67,50 @@ from pi.ai.types import (
 )
 
 CompactFn = Callable[[list[AgentMessage], int, int], Awaitable[CompactionResult]]
+
+
+def _validate_tool_arguments(
+    arguments: dict[str, Any],
+    parameters: dict[str, Any],
+) -> str | None:
+    """根据工具的 JSON Schema 校验参数，返回错误描述或 None。
+
+    仅检查 required 字段和基本类型，不引入 jsonschema 依赖。
+    """
+    required = parameters.get("required", [])
+    for field_name in required:
+        if field_name not in arguments:
+            return f"Missing required parameter: {field_name}"
+
+    props = parameters.get("properties", {})
+    type_map = {
+        "string": str,
+        "integer": int,
+        "number": (int, float),
+        "boolean": bool,
+        "array": list,
+        "object": dict,
+    }
+    for field_name, value in arguments.items():
+        if field_name not in props:
+            continue
+        field_schema = props[field_name]
+        expected_type = field_schema.get("type")
+        if expected_type and expected_type in type_map:
+            py_type = type_map[expected_type]
+            if expected_type == "integer" and isinstance(value, bool):
+                return f"Parameter '{field_name}' must be integer, got boolean"
+            if expected_type == "number" and isinstance(value, bool):
+                return f"Parameter '{field_name}' must be number, got boolean"
+            if not isinstance(value, py_type):
+                return (
+                    f"Parameter '{field_name}' must be {expected_type},"
+                    f" got {type(value).__name__}"
+                )
+            enum_values = field_schema.get("enum")
+        if enum_values and value not in enum_values:
+            return f"Parameter '{field_name}' must be one of {enum_values}, got {value!r}"
+    return None
 
 
 @dataclass
@@ -203,8 +250,10 @@ async def run_agent_loop(
     tool_execution: ToolExecutionMode = ToolExecutionMode.PARALLEL,
     tool_context: Any = None,
     get_steering_messages: Callable[[], list[AgentMessage]] | None = None,
-    compact_fn: CompactFn | None = None,
-    max_turns: int | None = None,
+   compact_fn: CompactFn | None = None,
+   max_turns: int | None = None,
+    before_tool_call: BeforeToolCallFn | None = None,
+    after_tool_call: AfterToolCallFn | None = None,
 ) -> AgentLoopResult:
     """使用新提示词运行一次 agent 循环。
 
@@ -357,7 +406,57 @@ async def run_agent_loop(
             new_messages.extend(steering)
             continue
 
+        # Truncated response guard: when stop_reason is "length", the model
+        # likely produced incomplete tool calls — refuse to execute them.
+        if agent_msg.stop_reason == "length":
+            tool_results = [
+                AgentToolResult(
+                    tool_call_id=tc.id,
+                    tool_name=tc.name,
+                    content=[
+                        TextContent(
+                            text="Tool calls were not executed because the "
+                            "model response was truncated (stop_reason=length). "
+                            "Please retry with a shorter response."
+                        )
+                    ],
+                    is_error=True,
+                )
+                for tc in tool_calls
+            ]
+            for tc, result in zip(tool_calls, tool_results, strict=True):
+                await sink(
+                    ToolExecutionStartEvent(
+                        tool_call_id=tc.id,
+                        tool_name=tc.name,
+                        arguments=tc.arguments,
+                    )
+                )
+                await sink(
+                    ToolExecutionEndEvent(
+                        tool_call_id=tc.id,
+                        tool_name=tc.name,
+                        result=result,
+                    )
+                )
+                tr_msg = AgentToolResultMessage(
+                    tool_call_id=tc.id,
+                    tool_name=tc.name,
+                    content=result.content,
+                    details=result.details,
+                    is_error=result.is_error,
+                    timestamp=int(time.time() * 1000),
+                )
+                all_messages.append(tr_msg)
+                new_messages.append(tr_msg)
+            await sink(TurnEndEvent(message=agent_msg, tool_results=tool_results))
+            steering = get_steering_messages() if get_steering_messages else []
+            all_messages.extend(steering)
+            new_messages.extend(steering)
+            continue
+
         async def execute_and_emit(tool_call: ToolCall) -> AgentToolResult:
+            tool = tools_map.get(tool_call.name)
             await sink(
                 ToolExecutionStartEvent(
                     tool_call_id=tool_call.id,
@@ -365,13 +464,85 @@ async def run_agent_loop(
                     arguments=tool_call.arguments,
                 )
             )
+            # Validate arguments against tool's JSON Schema before execution.
+            if tool is not None:
+                validation_error = _validate_tool_arguments(
+                    tool_call.arguments, tool.parameters,
+                )
+                if validation_error:
+                    result = AgentToolResult(
+                        tool_call_id=tool_call.id,
+                        tool_name=tool_call.name,
+                        content=[TextContent(text=validation_error)],
+                        is_error=True,
+                    )
+                    await sink(
+                        ToolExecutionEndEvent(
+                            tool_call_id=tool_call.id,
+                            tool_name=tool_call.name,
+                            result=result,
+                        )
+                    )
+                    return result
+            # Prepare arguments if the tool has a prepare_arguments hook.
+            if tool is not None and tool.prepare_arguments is not None:
+                try:
+                    prepared = tool.prepare_arguments(dict(tool_call.arguments))
+                    tool_call = ToolCall(
+                        id=tool_call.id,
+                        name=tool_call.name,
+                        arguments=prepared,
+                    )
+                except Exception as exc:
+                    result = AgentToolResult(
+                        tool_call_id=tool_call.id,
+                        tool_name=tool_call.name,
+                        content=[TextContent(text=f"Argument preparation failed: {exc}")],
+                        is_error=True,
+                    )
+                    await sink(
+                        ToolExecutionEndEvent(
+                            tool_call_id=tool_call.id,
+                            tool_name=tool_call.name,
+                            result=result,
+                        )
+                    )
+                    return result
+            # before_tool_call hook
+            agent_tool_call = AgentToolCall(
+                id=tool_call.id,
+                name=tool_call.name,
+                arguments=tool_call.arguments,
+            )
+            if before_tool_call is not None:
+                try:
+                    await before_tool_call(agent_tool_call, tool)
+                except Exception as exc:
+                    result = AgentToolResult(
+                        tool_call_id=tool_call.id,
+                        tool_name=tool_call.name,
+                        content=[TextContent(text=f"before_tool_call hook error: {exc}")],
+                        is_error=True,
+                    )
+                    await sink(
+                        ToolExecutionEndEvent(
+                            tool_call_id=tool_call.id,
+                            tool_name=tool_call.name,
+                            result=result,
+                        )
+                    )
+                    return result
             abort_event = options.abort_event if options else None
             result = await _execute_tool_call(
                 tool_call,
-                tools_map.get(tool_call.name),
+                tool,
                 abort_event,
                 tool_context,
             )
+            # after_tool_call hook
+            if after_tool_call is not None:
+                with contextlib.suppress(Exception):
+                    await after_tool_call(agent_tool_call, tool, result)
             await sink(
                 ToolExecutionEndEvent(
                     tool_call_id=tool_call.id,
@@ -381,7 +552,15 @@ async def run_agent_loop(
             )
             return result
 
-        if tool_execution == ToolExecutionMode.PARALLEL:
+        # Per-tool execution_mode override: if any tool in the batch requests
+        # sequential execution, run the entire batch sequentially.
+        batch_mode = tool_execution
+        for tc in tool_calls:
+            tool = tools_map.get(tc.name)
+            if tool is not None and tool.execution_mode == ToolExecutionMode.SEQUENTIAL:
+                batch_mode = ToolExecutionMode.SEQUENTIAL
+                break
+        if batch_mode == ToolExecutionMode.PARALLEL:
             tool_results = await asyncio.gather(
                 *(execute_and_emit(tool_call) for tool_call in tool_calls)
             )
@@ -432,11 +611,14 @@ async def run_agent_loop(
                 ContextCompactedEvent(
                     original_tokens=compacted.original_tokens,
                     compacted_tokens=compacted.compacted_tokens,
-                    dropped_messages=compacted.dropped_messages,
-                )
+                   dropped_messages=compacted.dropped_messages,
+               )
             )
 
         await sink(TurnEndEvent(message=agent_msg, tool_results=tool_results))
+        # If all tools in the batch requested termination, stop the loop.
+        if tool_results and all(r.terminate for r in tool_results):
+            break
         steering = get_steering_messages() if get_steering_messages else []
         all_messages.extend(steering)
         new_messages.extend(steering)

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.formatted_text import StyleAndTextTuples
 from prompt_toolkit.formatted_text.utils import fragment_list_width
@@ -23,6 +25,9 @@ PROMPT_STYLE_RULES = {
     "input.placeholder": "italic #6b7280",
     "input.motion": "bold #67e8f9",
     "input.border": "#22d3ee",
+    "input.queue.label": "bold #fbbf24",
+    "input.queue.text": "#d1d5db",
+    "input.queue.count": "#9ca3af",
     "input.brand": "bold #60a5fa",
     "input.separator": "#6b7280",
     "input.ready": "bold #a3e635",
@@ -47,11 +52,12 @@ def create_prompt_session(
     message,
     command_names: list[str],
     history_file: Path | None,
+    erase_input_when: Callable[[str], bool] | None = None,
 ) -> PromptSession[str]:
     """创建带安全历史、命令补全和非交互回退的输入会话。"""
     history = SafeFileHistory(str(history_file)) if history_file else SafeInMemoryHistory()
     interactive_terminal = sys.stdin.isatty() and sys.stdout.isatty()
-    return PromptSession(
+    session: PromptSession[str] = PromptSession(
         message=message,
         history=history,
         auto_suggest=AutoSuggestFromHistory(),
@@ -64,6 +70,16 @@ def create_prompt_session(
         input=None if interactive_terminal else DummyInput(),
         output=None if interactive_terminal else DummyOutput(),
     )
+    if erase_input_when is not None:
+        original_accept = session.default_buffer.accept_handler
+        if original_accept is not None:
+
+            def accept(buffer: Buffer) -> bool:
+                session.app.erase_when_done = erase_input_when(buffer.text)
+                return original_accept(buffer)
+
+            session.default_buffer.accept_handler = accept
+    return session
 
 
 def build_input_prompt(
@@ -72,11 +88,14 @@ def build_input_prompt(
     console_width: int,
     request_active: bool,
     timestamp: float,
+    pending_follow_ups: Sequence[str] = (),
 ) -> StyleAndTextTuples:
-    """构建状态轨道和开放式输入行。"""
+    """构建状态轨道、待处理 follow-up 和开放式输入行。"""
     header: StyleAndTextTuples = [("class:input.border", "╭─"), *status]
     fill_width = max(1, console_width - fragment_list_width(header) - 1)
     header.append(("class:input.border", f"{'─' * fill_width}╮\n"))
+    if pending_follow_ups:
+        _append_follow_up_row(header, pending_follow_ups, console_width)
     frames = WORKING_ANIMATION if request_active else READY_ANIMATION
     frame = frames[int(timestamp * ANIMATION_FPS) % len(frames)]
     header.extend(
@@ -87,6 +106,51 @@ def build_input_prompt(
         ]
     )
     return header
+
+
+def _append_follow_up_row(
+    fragments: StyleAndTextTuples,
+    pending_follow_ups: Sequence[str],
+    console_width: int,
+) -> None:
+    """追加一行有界队列摘要，避免长文本改变输入区宽度。"""
+    prefix = "│  ↳ follow-up  "
+    count = f"  +{len(pending_follow_ups) - 1} more" if len(pending_follow_ups) > 1 else ""
+    content_width = max(0, console_width - fragment_list_width([("", prefix + count + "│")]))
+    text = _truncate_display_text(pending_follow_ups[0], content_width)
+    used_width = fragment_list_width([("", prefix + text + count + "│")])
+    padding = " " * max(0, console_width - used_width)
+    fragments.extend(
+        [
+            ("class:input.border", "│  "),
+            ("class:input.queue.label", "↳ follow-up  "),
+            ("class:input.queue.text", text),
+            ("class:input.queue.count", count),
+            ("class:input.border", f"{padding}│\n"),
+        ]
+    )
+
+
+def _truncate_display_text(text: str, max_width: int) -> str:
+    """按终端显示宽度压缩单行文本。"""
+    normalized = " ".join(text.split())
+    if max_width <= 0:
+        return ""
+    if fragment_list_width([("", normalized)]) <= max_width:
+        return normalized
+    ellipsis = "…"
+    ellipsis_width = fragment_list_width([("", ellipsis)])
+    if max_width < ellipsis_width:
+        return ""
+    width = 0
+    kept: list[str] = []
+    for character in normalized:
+        character_width = fragment_list_width([("", character)])
+        if width + character_width + ellipsis_width > max_width:
+            break
+        kept.append(character)
+        width += character_width
+    return f"{''.join(kept)}{ellipsis}"
 
 
 def build_input_status(
@@ -150,4 +214,3 @@ def build_input_status(
             fragments.append(("class:status.separator", "  "))
             fragments.append(items[key])
     return fragments
-

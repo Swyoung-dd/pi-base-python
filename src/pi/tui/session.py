@@ -98,6 +98,7 @@ class InteractiveSession:
         self._agent_task: asyncio.Task[None] | None = None
         self._request_active = False
         self._request_usage = Usage()
+        self._pending_follow_ups: list[str] = []
         self._sessions_dir = sessions_dir
         self._session_id = session_id
         self._session_storage = session_storage
@@ -120,6 +121,7 @@ class InteractiveSession:
             self._input_prompt,
             command_names,
             history_file,
+            self._should_erase_prompt_input,
         )
 
     def _tool_tree(self, tool_calls: list[ToolCall]) -> list[Tree]:
@@ -158,6 +160,7 @@ class InteractiveSession:
             console_width=self._console.width,
             request_active=self._request_active,
             timestamp=time.monotonic(),
+            pending_follow_ups=self._pending_follow_ups,
         )
 
     def _input_status(self) -> StyleAndTextTuples:
@@ -170,6 +173,11 @@ class InteractiveSession:
             git_status=self._git_status,
             console_width=self._console.width,
         )
+
+    def _should_erase_prompt_input(self, prompt: str) -> bool:
+        """只擦除进入可视队列的 follow-up 命令，避免滚动区重复显示。"""
+        command, _, argument = prompt.lstrip().partition(" ")
+        return self._agent.is_busy and command == "/follow-up" and bool(argument.strip())
 
     def _set_request_active(self, active: bool) -> None:
         """同步更新请求状态、输入框边框与动态提示。"""
@@ -209,6 +217,7 @@ class InteractiveSession:
         try:
             await self._agent.prompt(prompt)
         finally:
+            self._pending_follow_ups.clear()
             self._git_status = await asyncio.to_thread(_read_git_status, self._cwd)
             self._set_request_active(False)
             self._print_request_usage()
@@ -218,13 +227,19 @@ class InteractiveSession:
         """把输入委托给命令分发器。"""
         return await CommandDispatcher(self, select_option).handle(prompt)
 
-    def _submit_agent_prompt(self, prompt: str, follow_up: bool = False) -> None:
+    def _submit_agent_prompt(
+        self,
+        prompt: str,
+        follow_up: bool = False,
+        display_prompt: str | None = None,
+    ) -> None:
         """启动新请求，或把消息加入正在运行的 agent 队列。"""
         if self._agent.is_busy:
             message = create_user_message(prompt)
             if follow_up:
                 self._agent.follow_up(message)
-                self._console.print("Queued follow-up.", style=self._theme.muted)
+                self._pending_follow_ups.append(display_prompt or prompt)
+                self._refresh_prompt()
             else:
                 self._agent.steer(message)
                 self._console.print("Queued steering message.", style=self._theme.muted)
@@ -237,6 +252,9 @@ class InteractiveSession:
         """转发扩展事件并把 Agent 事件交给渲染器。"""
         await self._emit_extension_event("agent_event", event)
         outcome = self._event_renderer.render(event, self._console, self._theme)
+        if event.type == "agent_end" and self._pending_follow_ups:
+            self._pending_follow_ups.pop(0)
+            self._refresh_prompt()
         if outcome.usage is not None:
             self._record_usage(outcome.usage)
         if outcome.refresh_prompt:
@@ -329,4 +347,3 @@ class InteractiveSession:
                 {"session_id": self._session_id},
             )
             signal.signal(signal.SIGINT, previous_sigint)
-
